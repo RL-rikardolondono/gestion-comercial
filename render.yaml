@@ -1,0 +1,39 @@
+# Plano de Render (plan GRATUITO). La base de datos va en Neon (gratis), no en Render.
+services:
+  - type: web
+    name: gestion-comercial
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /salud
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL        # cadena de conexión de Neon (la que dice "pooled")
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: META_VERIFY_TOKEN
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        value: Ricardo Londoño
+      - key: APP_ORIGIN
+        value: https://comercial.skynetgenesis.com
+      - key: META_APP_SECRET
+        sync: false
+      - key: BREVO_API_KEY       # correo gratis (300 al día) con Brevo
+        sync: false
+      - key: MAIL_FROM
+        value: "Gestión ComercIAl <no-responder@skynetgenesis.com>"
+      - key: AI_ENABLED          # la IA queda apagada; el asistente funciona por reglas sin costo
+        value: "false"
