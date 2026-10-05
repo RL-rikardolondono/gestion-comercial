@@ -523,6 +523,19 @@ function me(){
 }
 const isProv = () => me().role==="proveedor";
 function tenant(){ return S.tenants.get(S.tid) || {id:S.tid, name:S.config.company, plan:"pro", status:"activo"}; }
+/* Regla de cobro de SkyNet Genesis: "Pagado hasta" (fin de mes). Sin pago: desde el día 5, aviso rojo con cuenta regresiva; el día 10 se cierra el acceso */
+const SG_PAGO="https://skynetgenesis.com", SG_WA="https://wa.me/573044375758";
+function hoyBog(){ return new Intl.DateTimeFormat("en-CA",{timeZone:"America/Bogota"}).format(new Date()); }
+function finMesISO(f){ const d=new Date(f.slice(0,7)+"-01T12:00:00Z"); d.setUTCMonth(d.getUTCMonth()+1,0); return d.toISOString().slice(0,10); }
+function addDISO(f,n){ const d=new Date(f+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+function pagadoHasta(t){ return (t&&t.paidUntil) ? String(t.paidUntil).slice(0,10) : finMesISO(t&&t.createdAt ? new Date(t.createdAt).toISOString().slice(0,10) : hoyBog()); }
+function estadoPago(t){ const ph=pagadoHasta(t), h=hoyBog(); if(ph>=h) return {k:"activa", t:"Activa", cls:"st-ganado", hasta:ph};
+  const d10=addDISO(ph,10); if(h>=d10) return {k:"cerrada", t:"Cerrada por pago", cls:"hand", hasta:ph, cierre:d10};
+  if(h>=addDISO(ph,5)){ const n=Math.round((Date.parse(d10)-Date.parse(h))/864e5); return {k:"aviso", t:"Aviso: "+n+(n===1?" día":" días"), cls:"hand", dias:n, hasta:ph, cierre:d10}; }
+  return {k:"activa", t:"Activa · pago pendiente", cls:"due", hasta:ph}; }
+const fechaPago = f => new Date(f+"T12:00:00").toLocaleDateString("es-CO",{day:"numeric",month:"long",year:"numeric"});
+function avisoPagoGC(ep){ return `<div role="alert" style="background:#B93A27;color:#fff;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center"><span><b>Mensualidad pendiente: le ${ep.dias===1?"queda 1 día":"quedan "+ep.dias+" días"}.</b> El ${fechaPago(ep.cierre)} se cerrará el acceso si no se registra el pago.</span><a class="btn sm" href="${SG_PAGO}" target="_blank" rel="noopener" style="background:#fff;color:#B93A27;border-color:#fff">Pagar con Bold</a><a class="btn sm" href="${SG_WA}" target="_blank" rel="noopener" style="background:#1F8A4C;color:#fff;border-color:#1F8A4C">WhatsApp de soporte 304 437 5758</a></div>`; }
+function cerradoPagoGC(ep){ return `<div role="alert" style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:16px"><div class="panel" style="max-width:580px;width:100%;padding:24px"><h2 style="margin:0 0 8px">El acceso está cerrado por pago</h2><p><span class="chip hand">Cerrada por pago</span></p><p>${esc(tenant().name||S.config.company||"Su empresa")} tenía la mensualidad pagada hasta el ${fechaPago(ep.hasta)}. Según las condiciones del servicio, desde el día 5 sin pago se muestra un aviso y el día 10 se cierra el acceso hasta que se registre el pago. Mientras tanto, el asistente no responde a sus clientes.</p><p>Sus datos se conservan completos. En cuanto se registre el pago, el acceso se restablece de inmediato.</p><div class="row" style="flex-wrap:wrap;gap:8px;margin-top:14px"><a class="btn primary" href="${SG_PAGO}" target="_blank" rel="noopener">Pagar con Bold</a><a class="btn" href="${SG_WA}" target="_blank" rel="noopener" style="background:#1F8A4C;color:#fff;border-color:#1F8A4C">WhatsApp de soporte 304 437 5758</a>${SRV?'<button class="btn ghost" data-srv="logout">Cerrar sesión</button>':""}</div></div></div>`; }
 const plan = () => PLANS[tenant().plan] || PLANS.pro;
 const featOn = f => plan().feats.includes(f);
 const chanOn = c => plan().channels.includes(c);
@@ -846,7 +859,8 @@ function draw(){
   const bar=`<div class="userbar"><div class="row"><span class="avatar sm">${esc((u.name||"?").trim()[0]||"?")}</span><div><b>${esc(u.name)}</b> <span class="chip role-${u.role}">${ROLES[u.role]?.label||u.role}</span></div></div>
     <div class="row">${S.tenants.size&&(!SRV||isProv())?`<label class="row" style="gap:6px"><span class="muted">Empresa</span><select id="tenSel" aria-label="Empresa">${[...S.tenants.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name))).map(t=>`<option value="${t.id}" ${t.id===S.tid?"selected":""}>${esc(t.name)} · ${PLANS[t.plan]?.label||""}</option>`).join("")}</select></label>`:""}
     ${SRV?`<button class="btn sm" data-srv="pass">Cambiar contraseña</button><button class="btn sm ghost" data-srv="logout">Cerrar sesión</button>`:`<label class="row" style="gap:6px"><span class="muted">Usuario</span><select id="meSel" aria-label="Cambiar de usuario">${loginList().map(x=>`<option value="${x.id}" ${x.id===u.id?"selected":""}>${esc(x.name)} · ${ROLES[x.role]?.label||""}</option>`).join("")}</select></label>`}</div></div>
-    ${tenant().status==="suspendido"?'<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está suspendida: el asistente no responde a sus clientes hasta que se reactive.</div>':""}`;
+    ${tenant().status==="suspendido"?'<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está suspendida: el asistente no responde a sus clientes hasta que se reactive.</div>':""}${(()=>{ const ep=estadoPago(tenant()); return ep.k==="aviso" ? avisoPagoGC(ep) : (ep.k==="cerrada"&&isProv() ? '<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está cerrada por pago: sus usuarios ven la pantalla de cierre hasta que usted actualice "Pagado hasta".</div>' : ""); })()}`;
+  if(estadoPago(tenant()).k==="cerrada" && !isProv()){ m.innerHTML = bar + cerradoPagoGC(estadoPago(tenant())); return; }
   m.innerHTML = bar + (locked(S.view) ? lockedView(S.view) : (fns[S.view]||vPanel)()) + lossModal() + (SRV&&S.passOpen?`<div class="sheet"><div class="panel" role="dialog" aria-label="Cambiar contraseña"><h2>Cambiar contraseña</h2><div class="fields"><label class="f">Contraseña actual<input type="password" id="pw-cur" autocomplete="current-password"></label><label class="f">Nueva contraseña (mínimo 8 caracteres)<input type="password" id="pw-new" autocomplete="new-password"></label><div class="row"><button class="btn primary" data-srv="passok">Guardar</button><button class="btn" data-srv="passno">Cancelar</button></div></div></div></div>`:"");
   if(S.view==="bandeja"||S.view==="probar"){ m.querySelectorAll(".msgs").forEach(e=>{ if(!e.dataset.init){ e.scrollTop=e.scrollHeight; e.dataset.init=1; } }); }
 }
@@ -1163,12 +1177,13 @@ function vClients(){
       <label class="f">Correo de facturación<input type="email" id="nt-fe"></label></div>
       <label class="toggle" style="margin-top:8px"><input type="checkbox" id="nt-install" checked> Generar el cobro de configuración inicial (${cop(platform().pricing.install||0)})</label>
       <div class="row" style="margin-top:10px"><button class="btn primary" data-act="createtenant">Crear empresa</button><button class="btn" data-act="canceltenant">Cancelar</button></div></div>`:""}
-  <div class="panel" style="margin-bottom:14px"><h2>Empresas</h2>${T.length?`<div class="tablewrap"><table><thead><tr><th>Empresa</th><th>Plan</th><th>Mensualidad</th><th>Cartera</th><th>Uso</th><th>Estado</th><th>Cliente desde</th><th></th></tr></thead><tbody>
+  <div class="panel" style="margin-bottom:14px"><h2>Empresas</h2>${T.length?`<div class="tablewrap"><table><thead><tr><th>Empresa</th><th>Plan</th><th>Mensualidad</th><th>Cartera</th><th>Uso</th><th>Pagado hasta</th><th>Estado</th><th>Cliente desde</th><th></th></tr></thead><tbody>
     ${T.map(t=>`<tr><td><b>${esc(t.name)}</b>${t.id===S.tid?' <span class="chip web">Abierta</span>':""}<br><span class="muted">${esc(t.sector||"")}</span></td>
       <td><select data-tplan="${t.id}" aria-label="Plan">${PLAN_ORDER.map(k=>`<option value="${k}" ${t.plan===k?"selected":""}>${PLANS[k].label}</option>`).join("")}</select></td>
       <td class="mono">${cop(tenantFee(t))}${extraSedes(t)?`<br><span class="muted" style="font-family:var(--f-body)">incluye ${extraSedes(t)} sede${extraSedes(t)>1?"s":""} adicional${extraSedes(t)>1?"es":""}</span>`:""}</td>
       <td>${(()=>{const d=tenantDebt(t.id);return d.bal?`<span class="mono">${cop(d.bal)}</span><br>${d.late>0?`<span class="chip hand">${d.late} días de mora</span>`:'<span class="chip">Por vencer</span>'}`:'<span class="chip st-ganado">Al día</span>'})()}${!billArr().some(b=>b.tid===t.id&&b.kind==="instalacion")?`<br><button class="btn sm ghost" data-install="${t.id}" style="margin-top:4px">Cobrar configuración inicial</button>`:""}</td>
       <td>${(()=>{const h=healthOf(t),st=t.stats;return `<span class="chip ${h[1]}">${h[0]}</span>${st?`<br><span class="muted" style="font-size:12px">${st.conv||0} conv. · activo ${ago(st.lastAct)}</span>`:""}`})()}</td>
+      <td><input type="date" data-tpaid="${t.id}" value="${pagadoHasta(t)}" aria-label="Pagado hasta" style="max-width:150px"><br>${(()=>{const ep=estadoPago(t);return `<span class="chip ${ep.cls}">${ep.t}</span>`})()}</td>
       <td><select data-tstatus="${t.id}" aria-label="Estado">${["activo","prueba","suspendido"].map(x=>`<option value="${x}" ${(t.status||"activo")===x?"selected":""}>${x[0].toUpperCase()+x.slice(1)}</option>`).join("")}</select></td>
       <td>${t.createdAt?new Date(t.createdAt).toLocaleDateString("es-CO"):"—"}</td>
       <td><button class="btn sm" data-enter="${t.id}">Entrar</button></td></tr>`).join("")}</tbody></table></div>`:'<div class="empty"><b>Aún no hay empresas clientes</b>Cree la primera con el botón Nueva empresa cliente.</div>'}</div>
@@ -1796,6 +1811,7 @@ document.addEventListener("click", async e=>{
       const blob=r.doc.output("blob"); if(S.downloads){ try{ await S.downloads.save({filename:`cuenta-de-cobro-${r.n}.pdf`, data:blob}); }catch(err){ if(err&&err.code!=="cancelled"&&err.code!=="declined") toast("No se pudo descargar el PDF."); } } else toast("La descarga no está disponible en esta vista."); break; }
     case "pay": { if(!b) return; let amt=Number($("#bp-amt").value)||0; if(amt<=0){ toast("Escriba el valor."); return; } if(amt>balOf(b)) amt=balOf(b);
       const x=structuredClone(b); x.payments=[...(x.payments||[]),{amount:amt, at:fromDateInput($("#bp-date").value), method:$("#bp-m").value, note:$("#bp-note").value.trim()}]; await writeBill(x);
+      if(balOf(x)<=0 && x.kind==="mensualidad" && /^\d{4}-\d{2}$/.test(x.period||"")){ const tp=S.tenants.get(x.tid); const nh=finMesISO(x.period+"-01"); if(tp && pagadoHasta(tp)<nh) await writeTenant({...tp, paidUntil:nh}); }
       if(balOf(x)<=0){ await billRemind(x.id, `Hola ${x.tenantName}, confirmamos el pago de ${x.concept}${x.period?" de "+MES(x.period):""}. Gracias.`, null, true);
         const tn=S.tenants.get(x.tid); if(tn&&tn.status==="suspendido"&&tenantDebt(x.tid).bal<=0){ await writeTenant({...tn,status:"activo"}); toast("Pago registrado. La empresa quedó al día y se reactivó."); break; } }
       toast(balOf(x)<=0?"Pago registrado":"Abono registrado. Saldo "+cop(balOf(x))); break; }
@@ -2305,7 +2321,7 @@ document.addEventListener("click", async e=>{
     case "canceltenant": S.newTenant=false; render(); break;
     case "createtenant": { if(!isProv()) return; const name=$("#nt-name").value.trim(); if(!name){ toast("Escriba el nombre de la empresa."); return; }
       const tid=uid("t"), pl=$("#nt-plan").value, admin=$("#nt-admin").value.trim(), email=$("#nt-email").value.trim();
-      const tn={id:tid, name, plan:pl, status:"prueba", sector:$("#nt-sector").value.trim(), city:$("#nt-city").value.trim(), nit:$("#nt-nit").value.trim(), razon:$("#nt-rs").value.trim()||name, feMail:$("#nt-fe").value.trim()||email, createdAt:Date.now()};
+      const tn={id:tid, name, plan:pl, status:"prueba", paidUntil:finMesISO(hoyBog()), sector:$("#nt-sector").value.trim(), city:$("#nt-city").value.trim(), nit:$("#nt-nit").value.trim(), razon:$("#nt-rs").value.trim()||name, feMail:$("#nt-fe").value.trim()||email, createdAt:Date.now()};
       const doInstall=$("#nt-install")?.checked; S.newTenant=false; await writeTenant(tn); if(doInstall) await chargeInstall(tn);
       const tpl=SECTOR_TPL[tn.sector]; const cfg={...structuredClone(DEFAULT_CONFIG), company:name, sector:tn.sector, city:tn.city, ...(tpl?{assistant:tpl.assistant, services:tpl.services, faqs:tpl.faqs, biz:{...BIZ_DEFAULT, services:tpl.agendaServices, agendaOn:tpl.agendaServices.length>0}}:{})};
       await writeDoc("tenants/"+tid+"/config/main", cfg);
@@ -2359,6 +2375,7 @@ document.addEventListener("change", async e=>{
   if(t.id==="repMonth"){ S.repMonth=t.value; render(); }
   if(t.id==="tenSel"){ switchTenant(t.value); toast("Abrió "+(S.tenants.get(t.value)?.name||"la empresa")); }
   if(t.dataset.tplan){ const tn=S.tenants.get(t.dataset.tplan); if(tn&&isProv()){ await writeTenant({...tn, plan:t.value}); toast(`${tn.name}: plan ${PLANS[t.value].label}`); } }
+  if(t.dataset.tpaid){ const tn=S.tenants.get(t.dataset.tpaid); if(tn&&isProv()&&/^\d{4}-\d{2}-\d{2}$/.test(t.value)){ await writeTenant({...tn, paidUntil:t.value}); toast(`${tn.name}: pagado hasta ${fechaPago(t.value)} · ${estadoPago({...tn,paidUntil:t.value}).t}`); } }
   if(t.dataset.tstatus){ const tn=S.tenants.get(t.dataset.tstatus); if(tn&&isProv()){ await writeTenant({...tn, status:t.value}); toast(`${tn.name}: ${t.value}`); } }
   if(t.dataset.tkstatus){ const tk=S.tickets.get(t.dataset.tkstatus); if(tk){ await writeTicket({...tk, status:t.value}); toast("Estado actualizado"); } }
   if(t.id==="meSel"){ S.me=t.value; LS.set("me",t.value); S.sel=null; S.editUser=null; S.fresh=true; render(); toast("Ahora está viendo como "+userName(t.value)); }
