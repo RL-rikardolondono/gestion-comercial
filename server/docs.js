@@ -46,7 +46,7 @@ async function guardedWrite(u, path, data) {
   // Empresa: solo el proveedor cambia plan, estado y datos de facturación
   if (s[0] === "tenants" && s.length === 2 && !u.staff) {
     if (!prev.exists) throw Object.assign(new Error("No permitido"), { status: 403 });
-    const keep = ["plan", "status", "nit", "razon", "feMail", "name", "createdAt"];
+    const keep = ["plan", "status", "nit", "razon", "feMail", "name", "createdAt", "paidUntil"];
     for (const k of keep) data[k] = prev.data[k];
   }
   // Configuración: solo el administrador; los demás solo pueden mover el turno del reparto

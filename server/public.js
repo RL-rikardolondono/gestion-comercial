@@ -9,7 +9,7 @@ const engine = require("./engine");
 const cors = (req, res, next) => { res.set("Access-Control-Allow-Origin", "*"); res.set("Access-Control-Allow-Headers", "Content-Type, Authorization"); res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); if (req.method === "OPTIONS") return res.sendStatus(204); next(); };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-async function tenantOk(tid) { const t = await db.getDoc(`tenants/${tid}`); return t.exists && t.data.status !== "suspendido" ? t.data : null; }
+async function tenantOk(tid) { const t = await db.getDoc(`tenants/${tid}`); return t.exists && t.data.status !== "suspendido" && !require("./cobro").cerrada(t.data) ? t.data : null; }
 
 function router() {
   const r = express.Router();

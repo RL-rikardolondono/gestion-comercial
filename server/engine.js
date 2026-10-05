@@ -1,6 +1,7 @@
 // Motor 24/7: respuesta automática con IA, seguimientos, cobros (Ley 2300), recordatorios de citas,
 // mensualidades, resumen diario, envío real por canales y avisos a otros sistemas.
 const db = require("./db");
+const cobro = require("./cobro");
 const ai = require("./ai");
 const ch = require("./channels");
 const docs = require("./docs");
@@ -195,7 +196,7 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
   if (ctx.biz.privacy.on && l.consent !== "aceptado" && l.consentAsked && YES_RE.test(nt)) { l.consent = "aceptado"; l.consentAt = t; }
   l.awaiting = "empresa"; l.followStep = 0; if (l.stage === "perdido") setStage(l, "contactado");
   await saveLead(ctx, l);
-  const canBot = ctx.config.autoReply !== false && !l.followPaused && ctx.tenant.status !== "suspendido" && !(l.handoff && l.owner);
+  const canBot = ctx.config.autoReply !== false && !l.followPaused && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !(l.handoff && l.owner);
   if (canBot) await botAnswer(ctx, l);
   return ctx.leads.get(l.id);
 }
@@ -360,7 +361,7 @@ async function tick(only, force) {
     const tenants = await db.listCol("tenants");
     for (const t of tenants) {
       if (only && t.id !== only) continue;
-      if (t.data.status === "suspendido") continue;
+      if (t.data.status === "suspendido" || cobro.cerrada(t.data)) continue;
       try { const ctx = await loadTenant(t.id); await runFollowups(ctx); await runCollect(ctx); await runAppts(ctx); await runDigest(ctx); }
       catch (e) { console.error("tick", t.id, e.message); }
     }

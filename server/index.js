@@ -7,6 +7,7 @@ const docs = require("./docs");
 const ai = require("./ai");
 const engine = require("./engine");
 const pub = require("./public");
+const cobro = require("./cobro");
 const crypto = require("crypto");
 
 const app = express();
@@ -46,6 +47,15 @@ app.post("/api/auth/login", async (req, res) => {
 });
 app.use("/api", auth.middleware);
 app.get("/api/auth/me", (req, res) => res.json({ user: req.user }));
+// Regla de cobro: el día 10 sin pago la empresa queda cerrada; no puede registrar ni cambiar nada (la app muestra la pantalla de cierre)
+app.use("/api", async (req, res, next) => {
+  try {
+    const u = req.user; if (!u || u.staff || !u.tid || req.method === "GET" || req.path.startsWith("/auth/")) return next();
+    const t = await db.getDoc("tenants/" + u.tid);
+    if (t.exists && cobro.cerrada(t.data)) return res.status(402).json({ error: cobro.MSG, code: "cerrada" });
+  } catch (e) { /* si falla la revisión no se bloquea */ }
+  next();
+});
 app.post("/api/auth/password", async (req, res) => {
   const { current, password } = req.body || {};
   const r = await db.pool.query("SELECT email FROM auth_users WHERE id=$1", [req.user.id]);
