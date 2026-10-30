@@ -1,0 +1,17 @@
+{
+ "name": "Agente-IA",
+ "short_name": "Agente-IA",
+ "start_url": "./",
+ "display": "standalone",
+ "background_color": "#F4F8FB",
+ "theme_color": "#0B4F8A",
+ "lang": "es-CO",
+ "icons": [
+  {
+   "src": "icono.svg",
+   "sizes": "any",
+   "type": "image/svg+xml",
+   "purpose": "any"
+  }
+ ]
+}
