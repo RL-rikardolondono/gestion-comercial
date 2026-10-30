@@ -116,11 +116,22 @@ app.post("/api/auth/users", async (req, res) => {
   const ex = await db.pool.query("SELECT tenant_id FROM auth_users WHERE id=$1", [b.id]);
   if (ex.rows[0] && ex.rows[0].tenant_id !== tid) return res.status(403).json({ error: "No permitido." });
   if (b.email && (await db.pool.query("SELECT 1 FROM bloqueos WHERE email=$1", [String(b.email).trim().toLowerCase()])).rows[0]) return res.status(403).json({ error: "Ese correo está bloqueado por SkyNet Genesis. Escríbanos por WhatsApp (304 437 5758)." });
+  // Sin contraseña: la cuenta se crea con una clave al azar que nadie conoce y se envía el enlace para que la persona cree la suya
+  // (las cuentas del dueño lo reciben en rikardolondono@gmail.com)
+  let sinClave = false;
+  if (b.email && !b.password && !ex.rows[0]) { sinClave = true; b.password = crypto.randomBytes(18).toString("base64url"); }
   try {
     if (b.email) await auth.upsertUser({ id: b.id, email: b.email, password: b.password, tid, role: b.role, staff: false, active: b.active !== false });
+    let enlace = "";
+    if (sinClave) {
+      await db.pool.query("UPDATE auth_users SET pass_set=false WHERE id=$1", [b.id]);
+      const row = (await db.pool.query("SELECT id, email, active, tenant_id, role, staff FROM auth_users WHERE id=$1", [b.id])).rows[0];
+      const origin = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://comercial.skynetgenesis.com";
+      try { const x = await auth.enviarEnlace(row, origin, (to, sub, txt) => ch.sendEmail(to, sub, txt, { sistema: true }), "sa"); enlace = x.dueno ? "rikardolondono@gmail.com" : row.email; } catch (e) { enlace = "error: " + e.message; }
+    }
     const doc = { name: b.name, email: b.email || "", role: b.role, active: b.active !== false, createdAt: b.createdAt || Date.now(), ...(b.sede !== undefined ? { sede: b.sede } : {}), ...(b.goal !== undefined ? { goal: b.goal } : {}) };
     await docs.guardedWrite({ ...u, tid, staff: true }, `tenants/${tid}/users/${b.id}`, doc);
-    res.json({ ok: true, access: !!b.email });
+    res.json({ ok: true, access: !!b.email, enlace });
   } catch (e) { res.status(400).json({ error: /duplicate|unique/i.test(e.message) ? "Ese correo ya tiene una cuenta." : e.message }); }
 });
 
