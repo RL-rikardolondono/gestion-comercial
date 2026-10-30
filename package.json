@@ -1,7 +1,7 @@
 {
   "name": "gestion-comercial",
   "version": "1.0.0",
-  "description": "Gestión ComercIAl: atención automática con IA, CRM, seguimiento, cobros y mensualidades para empresas",
+  "description": "Agente-IA de SkyNet Genesis: SofIA atiende, vende, hace posventa y fideliza a los clientes de cada empresa",
   "main": "server/index.js",
   "scripts": { "start": "node server/index.js", "test": "node server/selftest.js" },
   "engines": { "node": ">=20" },

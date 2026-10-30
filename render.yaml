@@ -21,19 +21,31 @@ services:
         generateValue: true
       - key: META_VERIFY_TOKEN
         generateValue: true
-      - key: ADMIN_EMAIL
-        sync: false
+      - key: ADMIN_EMAIL         # Superadministrador de Agente-IA (directiva 29 oct 2026: correo propio por app)
+        value: superadmin.agente@skynetgenesis.com
+      - key: NOTIFY_EMAIL        # adonde llegan los avisos internos (pagos para revisar)
+        value: contacto@skynetgenesis.com
       - key: ADMIN_PASSWORD
         sync: false
       - key: ADMIN_NAME
-        value: Ricardo Londoño
+        value: Superadministrador
       - key: APP_ORIGIN
-        value: https://comercial.skynetgenesis.com
+        value: https://agente-ia.skynetgenesis.com,https://comercial.skynetgenesis.com
       - key: META_APP_SECRET
         sync: false
       - key: BREVO_API_KEY       # correo gratis (300 al día) con Brevo
         sync: false
-      - key: MAIL_FROM
-        value: "Gestión ComercIAl <no-responder@skynetgenesis.com>"
-      - key: AI_ENABLED          # la IA queda apagada; el asistente funciona por reglas sin costo
-        value: "false"
+      - key: MAIL_FROM          # remitente verificado en Brevo
+        value: "SofIA · Agente-IA <sofia@skynetgenesis.com>"
+      - key: DEMO_PASSWORD      # opcional: crea la cuenta demo@skynetgenesis.com con una empresa de ejemplo
+        sync: false
+      - key: AI_ENABLED          # IA solo para empresas que compran paquetes en el Market (sin paquete, SofIA responde por reglas)
+        value: "true"
+      - key: ANTHROPIC_API_KEY   # llave de API propia de Agente-IA (organización de API de SkyNet Genesis)
+        sync: false
+      - key: AI_MODEL_QUICK      # modelo económico
+        value: claude-haiku-4-5-20251001
+      - key: AI_TOPE_USD_MES     # tope de gasto de IA de toda la plataforma por mes (US$)
+        value: "40"
+      - key: AI_TOPE_INTERNAS_USD # tope TOTAL de IA de las empresas internas (saldo gratis de la cuenta de Anthropic)
+        value: "200"
