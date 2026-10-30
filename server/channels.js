@@ -31,7 +31,7 @@ function mail() {
 }
 const mailOn = () => !!(process.env.BREVO_API_KEY || process.env.SMTP_URL);
 const FIRMA = "\n\n—\nEnviado con Agente-IA de SkyNet Genesis · contacto@skynetgenesis.com · WhatsApp 304 437 5758";
-const FROM_DEF = "SofIA · Agente-IA <no-responder@skynetgenesis.com>"; // remitente verificado en Brevo
+const FROM_DEF = "SofIA · Agente-IA <sofia@skynetgenesis.com>"; // remitente verificado en Brevo (dominio skynetgenesis.com autenticado)
 // Cupo del plan gratis de Brevo (300 correos al día para TODA la plataforma): se reserva una parte para los correos
 // del sistema (contraseñas, pruebas, pagos) y cada empresa tiene un tope diario, para que una sola no gaste el cupo de todas.
 const DIA = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date());
