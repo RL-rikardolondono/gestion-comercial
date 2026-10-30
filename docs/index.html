@@ -1347,7 +1347,7 @@ function vClients(){
       <label class="f">Plantilla del sector<select id="nt-sector">${Object.keys(SECTOR_TPL).map(k=>`<option>${k}</option>`).join("")}<option value="">Otro (en blanco)</option></select></label>
       <label class="f">Nombre del administrador<input type="text" id="nt-admin"></label>
       <label class="f">Correo del administrador<input type="email" id="nt-email"></label>
-      ${SRV?'<label class="f">Contraseña inicial del administrador<input type="text" id="nt-pass" placeholder="Mínimo 8 caracteres"></label>':""}
+      ${SRV?'<label class="f">Contraseña inicial del administrador (opcional)<input type="text" id="nt-pass" placeholder="Vacía: le llega un enlace por correo para crearla"></label>':""}
       <label class="f">Ciudad<input type="text" id="nt-city"></label>
       <label class="f">NIT o cédula (para factura)<input type="text" id="nt-nit"></label>
       <label class="f">Razón social<input type="text" id="nt-rs"></label>
@@ -1528,7 +1528,7 @@ function vUsers(){
       ${e?`<div class="panel"><h2>${e.id?"Editar usuario":"Nuevo usuario"}</h2><div class="fields">
         <label class="f">Nombre completo<input type="text" id="u-name" value="${esc(e.name||"")}"></label>
         <label class="f">Correo${SRV?" (para ingresar)":""}<input type="email" id="u-email" value="${esc(e.email||"")}"></label>
-        ${SRV?`<label class="f">${e.id?"Nueva contraseña (opcional)":"Contraseña inicial (mínimo 8 caracteres)"}<input type="text" id="u-pass" autocomplete="new-password"></label>`:""}
+        ${SRV?`<label class="f">${e.id?"Nueva contraseña (opcional)":"Contraseña inicial (opcional; vacía: le llega un enlace por correo)"}<input type="text" id="u-pass" autocomplete="new-password"></label>`:""}
         <label class="f">Nivel de acceso<select id="u-role">${["admin","supervisor","asesor"].map(k=>`<option value="${k}" ${(e.role||"asesor")===k?"selected":""}>${ROLES[k].label}</option>`).join("")}</select></label>
         ${featOn("sedes")&&S.sedes.size?`<label class="f">Sede${sedeSelect("u-sede",e.sede||"",false).replace('<option value="">Sin sede</option>','<option value="">Todas las sedes</option>')}</label>`:""}
         ${e.id?`<label class="toggle"><input type="checkbox" id="u-active" ${e.active!==false?"checked":""}> Usuario activo</label>`:""}
@@ -2691,7 +2691,7 @@ document.addEventListener("click", async e=>{
       const activeOthers=usersArr().filter(x=>x.active!==false&&x.id!==u.id).length;
       if(u.active && activeOthers>=plan().maxUsers){ toast(`El plan ${plan().label} permite ${plan().maxUsers} usuarios activos. Desactive uno o mejore el plan.`); return; }
       if($("#u-sede")) u.sede=$("#u-sede").value;
-      if(SRV){ try{ await window.GC_req("POST","/api/auth/users",{...u, tid:S.tid, password:$("#u-pass")?.value.trim()||undefined}); S.users.set(u.id,u); S.editUser=null; render(); toast(e2.id?"Usuario actualizado":"Usuario creado. Ya puede ingresar con su correo."); }catch(err){ toast(err.message||"No se pudo guardar el usuario."); } break; }
+      if(SRV){ try{ const r=await window.GC_req("POST","/api/auth/users",{...u, tid:S.tid, password:$("#u-pass")?.value.trim()||undefined}); S.users.set(u.id,u); S.editUser=null; render(); toast(e2.id?"Usuario actualizado":r&&r.enlace&&!/^error/.test(r.enlace)?"Usuario creado. Se envió el enlace para crear su contraseña a "+r.enlace+".":r&&r.enlace?"Usuario creado, pero el correo con el enlace no salió. Envíelo desde Cuentas y accesos.":"Usuario creado. Ya puede ingresar con su correo."); }catch(err){ toast(err.message||"No se pudo guardar el usuario."); } break; }
       writeUser(u); S.editUser=null; toast(e2.id?"Usuario actualizado":"Usuario creado"); break; }
     case "dellogo": writeLogo(""); toast("Logo quitado"); break;
     case "saverates": { if(!isProv()) return; const g=id=>Number($("#ai-"+id).value)||0; S.platform={...platform(), aiRates:{inp:g("inp"),out:g("out"),trm:g("trm")}}; render(); writeDoc("platform/settings", S.platform, "Tarifas guardadas"); break; }
@@ -2704,7 +2704,7 @@ document.addEventListener("click", async e=>{
       S.newTenant=false; await writeTenant(tn);
       const tpl=SECTOR_TPL[tn.sector]; const cfg={...structuredClone(DEFAULT_CONFIG), company:name, sector:tn.sector, city:tn.city, ...(tpl?{assistant:tpl.assistant, services:tpl.services, faqs:tpl.faqs, biz:{...BIZ_DEFAULT, services:tpl.agendaServices, agendaOn:tpl.agendaServices.length>0}}:{})};
       await writeDoc("tenants/"+tid+"/config/main", cfg);
-      if(admin && SRV){ const pass=$("#nt-pass")?.value.trim(); try{ await window.GC_req("POST","/api/auth/users",{id:uid("u"), name:admin, email, password:pass||undefined, role:"admin", active:true, tid}); }catch(err){ toast("La empresa se creó, pero el acceso del administrador no: "+(err.message||"")); } }
+      if(admin && SRV){ const pass=$("#nt-pass")?.value.trim(); try{ const r=await window.GC_req("POST","/api/auth/users",{id:uid("u"), name:admin, email, password:pass||undefined, role:"admin", active:true, tid}); if(r&&r.enlace) setTimeout(()=>toast(/^error/.test(r.enlace)?"El administrador quedó creado, pero el correo con el enlace no salió. Envíelo desde Cuentas y accesos.":"Se envió el enlace para crear la contraseña a "+r.enlace+"."),2600); }catch(err){ toast("La empresa se creó, pero el acceso del administrador no: "+(err.message||"")); } }
       else if(admin) await writeDoc("tenants/"+tid+"/users/"+uid("u"), {name:admin, email, role:"admin", active:true, createdAt:Date.now()});
       switchTenant(tid); go("conocimiento"); toast(`Empresa creada en prueba. Complete su base de conocimiento.`); break; }
     case "connsave": { if(!can("config")||!S.wizard) return; const c=CONNECTORS.find(x=>x.id===S.wizard); const data={}; c.fields.forEach(f=>{ const el=$("#cw-"+f.k); if(el) data[f.k]=el.value.trim(); });
