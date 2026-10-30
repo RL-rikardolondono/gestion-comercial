@@ -80,6 +80,13 @@ async function bootstrap() {
       const sd = await db.getDoc("staff/" + row.id); if (sd.exists) await db.setDoc("staff/" + row.id, { ...sd.data, email });
       console.log("Superadministrador: correo cambiado a", email);
     }
+    // ADMIN_PASSWORD de Render manda: cuando el dueño la cambia en Render, al arrancar se aplica UNA vez a su cuenta
+    // (así recupera el acceso sin correo). Si después cambia la clave dentro de la app, un reinicio no la pisa.
+    if (pass) {
+      const h = require("crypto").createHash("sha256").update("sa:" + row.id + ":" + pass).digest("hex");
+      if ((await db.kvGet("sapass:" + row.id)) !== h) { await upsertUser({ id: row.id, password: pass }); await db.kvSet("sapass:" + row.id, h); console.log("Superadministrador: contraseña puesta desde ADMIN_PASSWORD"); }
+    }
+    console.log("Superadministrador:", email);
     return;
   }
   if (!pass) return;
