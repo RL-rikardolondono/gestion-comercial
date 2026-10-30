@@ -9,6 +9,7 @@ const pool = new Pool({
   max: 5,
   idleTimeoutMillis: 5000, // cierra conexiones ociosas para que Neon pueda "dormir" y no gaste horas de cómputo
 });
+pool.on("error", (e) => console.error("Postgres (conexión inactiva cerrada por Neon)", e.message)); // sin esto el servidor se cae
 // Revisiones en memoria: la app pregunta cada pocos segundos si algo cambió;
 // se responde desde aquí sin tocar la base de datos.
 const mem = { col: new Map(), doc: new Map(), n: 0 };
@@ -24,6 +25,8 @@ async function init() {
       updated_at BIGINT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS docs_parent ON docs(parent);
+    CREATE INDEX IF NOT EXISTS docs_arch_key ON docs(parent, (data->>'extKey'));
+    CREATE INDEX IF NOT EXISTS docs_arch_p10 ON docs(parent, (data->>'p10'));
     CREATE TABLE IF NOT EXISTS auth_users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -48,6 +51,14 @@ async function init() {
     CREATE TABLE IF NOT EXISTS kv (
       k TEXT PRIMARY KEY,
       v TEXT NOT NULL
+    );
+    ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS last_login BIGINT;
+    ALTER TABLE auth_users ADD COLUMN IF NOT EXISTS pass_set BOOLEAN NOT NULL DEFAULT true;
+    CREATE TABLE IF NOT EXISTS bloqueos (
+      email TEXT PRIMARY KEY,
+      motivo TEXT NOT NULL,
+      por TEXT,
+      at BIGINT NOT NULL
     );
   `);
 }
@@ -76,6 +87,23 @@ async function setDoc(path, data) {
   );
   mem.doc.set(path, r.rows[0].version + ":" + now); bumpCol(parentOf(path));
   return r.rows[0].version;
+}
+// Guarda un documento conservando ciertos campos tal como están en la base EN ESE MOMENTO (atómico):
+// así un guardado desde la app no devuelve créditos de IA o un pago que el servidor cambió mientras tanto
+async function setDocKeep(path, data, keys) {
+  const now = Date.now();
+  const r = await pool.query(
+    `UPDATE docs SET data = ($2::jsonb - $3::text[]) || COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(docs.data) AS e(k, v) WHERE k = ANY($3::text[])), '{}'::jsonb),
+       version = version + 1, updated_at = $4 WHERE path = $1 RETURNING version`, [path, JSON.stringify(data), keys, now]);
+  if (!r.rows[0]) return setDoc(path, data);
+  mem.doc.set(path, r.rows[0].version + ":" + now); bumpCol(parentOf(path));
+  return r.rows[0].version;
+}
+// Cambia solo algunos campos de un documento, sin reescribir lo demás (no pisa un pago que se aplique al mismo tiempo)
+async function patchDoc(path, fields) {
+  const now = Date.now();
+  const r = await pool.query("UPDATE docs SET data = data || $2::jsonb, version = version + 1, updated_at = $3 WHERE path = $1 RETURNING version", [path, JSON.stringify(fields), now]);
+  if (r.rows[0]) { mem.doc.set(path, r.rows[0].version + ":" + now); bumpCol(parentOf(path)); }
 }
 async function delDoc(path) { await pool.query("DELETE FROM docs WHERE path=$1", [path]); mem.doc.set(path, "del"); bumpCol(parentOf(path)); }
 async function listCol(path) {
@@ -129,4 +157,4 @@ async function findTenantBySecret(k, value) {
 async function kvGet(k) { const r = await pool.query("SELECT v FROM kv WHERE k=$1", [k]); return r.rows[0]?.v ?? null; }
 async function kvSet(k, v) { await pool.query("INSERT INTO kv(k,v) VALUES($1,$2) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v", [k, String(v)]); }
 
-module.exports = { mem, bumpCol, pool, init, validPath, parentOf, idOf, getDoc, setDoc, delDoc, listCol, colRev, acquire, setSecret, getSecrets, findTenantBySecret, kvGet, kvSet };
+module.exports = { mem, bumpCol, pool, init, validPath, parentOf, idOf, getDoc, setDoc, setDocKeep, patchDoc, delDoc, listCol, colRev, acquire, setSecret, getSecrets, findTenantBySecret, kvGet, kvSet };

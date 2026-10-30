@@ -2,13 +2,16 @@
 // mensualidades, resumen diario, envío real por canales y avisos a otros sistemas.
 const db = require("./db");
 const cobro = require("./cobro");
+const mant = require("./mantenimiento");
+const care = require("./fidelizacion");
 const ai = require("./ai");
 const ch = require("./channels");
 const docs = require("./docs");
 const BOT = require("./bot");
-const AI_ON = () => process.env.AI_ENABLED === "true" && !!process.env.ANTHROPIC_API_KEY;
+const IA = require("./ia"); // módulo de pago «SofIA con inteligencia artificial»
+const ASESOR = require("./asesor"); // módulo de pago «Asesor con IA para su página web»
 
-const SYSTEM = { id: "system", staff: true, role: "proveedor" };
+const SYSTEM = docs.SYSTEM; // el motor escribe con el usuario interno (no se puede suplantar con un id)
 const DAY = 864e5, TZ = -5; // Colombia, UTC-5 sin horario de verano
 const local = (ts) => { const d = new Date(ts + TZ * 3600e3); return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), wd: d.getUTCDay(), h: d.getUTCHours(), mi: d.getUTCMinutes() }; };
 const dayKey = (ts) => { const l = local(ts); return `${l.y}-${l.m + 1}-${l.d}`; };
@@ -19,9 +22,9 @@ const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-
 const fdt = (ts) => new Date(ts).toLocaleString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
 const fdate = (ts) => new Date(ts).toLocaleDateString("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "short", year: "numeric" });
 
-const PLAN_FEATS = { basico: ["autoReply"], pro: ["autoReply", "followup", "collect"], empresarial: ["autoReply", "followup", "collect", "sedes", "reports", "api"] };
+const PLAN_FEATS = { basico: ["autoReply"], pro: ["autoReply", "followup", "collect", "care", "ia"], empresarial: ["autoReply", "followup", "collect", "care", "ia", "sedes", "reports", "api"] };
 const STAGE_ORDER = { nuevo: 0, contactado: 1, interesado: 2, propuesta: 3, ganado: 4, perdido: 5 };
-const CH_LABEL = { whatsapp: "WhatsApp", web: "Chat web", email: "Correo", form: "Formulario", instagram: "Instagram", facebook: "Facebook" };
+const CH_LABEL = { web: "Chat web", email: "Correo", form: "Formulario", instagram: "Instagram", facebook: "Facebook" };
 const TONES = { cercano: "cercano y amable", formal: "formal y profesional", entusiasta: "entusiasta y positivo" };
 
 /* ---------- festivos de Colombia y Ley 2300 ---------- */
@@ -43,7 +46,7 @@ function collectAllowedAt(ts) { const l = local(ts), h = l.h + l.mi / 60; if (l.
 
 /* ---------- contexto de una empresa ---------- */
 const BIZ_DEFAULT = { hours: { 1: [["08:00", "18:00"]], 2: [["08:00", "18:00"]], 3: [["08:00", "18:00"]], 4: [["08:00", "18:00"]], 5: [["08:00", "18:00"]], 6: [["08:00", "13:00"]], 0: [] }, slotMin: 30, remindHours: 24, agendaOn: true, services: [], catalog: [], assign: "off", rr: 0, slaMin: 15, privacy: { on: true, text: "Al escribirnos usted autoriza el tratamiento de sus datos personales para atender su solicitud, según la Ley 1581 de 2012. Si no desea recibir más mensajes, escriba BAJA.", url: "" }, survey: { on: true, text: "Gracias por elegirnos. ¿Cómo calificaría nuestra atención de 1 a 5?" }, digest: { on: false, to: "" } };
-const COLLECT_DEFAULT = { enabled: true, thanks: true, payInfo: "", steps: [{ offset: -3, text: "Hola {nombre}, le recordamos que su pago de {saldo} por {concepto} vence el {vence}. {pago}" }, { offset: 0, text: "Hola {nombre}, hoy vence su pago de {saldo} por {concepto}. {pago}" }, { offset: 3, text: "{nombre}, su pago de {saldo} por {concepto} tiene 3 días de retraso. Si ya pagó, envíenos el comprobante." }, { offset: 10, text: "{nombre}, su cuenta {numero} por {saldo} sigue pendiente. Responda este mensaje para acordar el pago." }] };
+const COLLECT_DEFAULT = { enabled: false, thanks: true, payInfo: "", steps: [{ offset: -3, text: "Hola {nombre}, le recordamos que su pago de {saldo} por {concepto} vence el {vence}. {pago}" }, { offset: 0, text: "Hola {nombre}, hoy vence su pago de {saldo} por {concepto}. {pago}" }, { offset: 3, text: "{nombre}, su pago de {saldo} por {concepto} tiene 3 días de retraso. Si ya pagó, envíenos el comprobante." }, { offset: 10, text: "{nombre}, su cuenta {numero} por {saldo} sigue pendiente. Responda este mensaje para acordar el pago." }] };
 
 async function loadTenant(tid) {
   const [t, cfg, conns, leads, invoices, appts, users, sedes, sec] = await Promise.all([
@@ -55,11 +58,11 @@ async function loadTenant(tid) {
   const biz = { ...BIZ_DEFAULT, ...b, hours: b.hours || BIZ_DEFAULT.hours, privacy: { ...BIZ_DEFAULT.privacy, ...(b.privacy || {}) }, survey: { ...BIZ_DEFAULT.survey, ...(b.survey || {}) }, digest: { ...BIZ_DEFAULT.digest, ...(b.digest || {}) } };
   const tenant = t.exists ? t.data : { plan: "pro", status: "activo" };
   return { tid, tenant, config, biz, conns: conns.exists ? conns.data : {}, sec,
-    leads: new Map(leads.map((x) => [x.id, { ...x.data, id: x.id }])), invoices: invoices.map((x) => ({ ...x.data, id: x.id })),
+    leads: new Map(leads.map((x) => [x.id, { ...x.data, id: x.id, _base: x.data.updatedAt || 0 }])), invoices: invoices.map((x) => ({ ...x.data, id: x.id })),
     appts: appts.map((x) => ({ ...x.data, id: x.id })), users: users.map((x) => ({ ...x.data, id: x.id })), sedes: sedes.map((x) => ({ ...x.data, id: x.id })),
     feats: PLAN_FEATS[tenant.plan] || PLAN_FEATS.pro };
 }
-const saveLead = (ctx, l) => { const b = { ...l }; delete b.id; b.updatedAt = Date.now(); if (b.messages && b.messages.length > 60) b.messages = b.messages.slice(-60); ctx.leads.set(l.id, { ...b, id: l.id }); return docs.guardedWrite(SYSTEM, `tenants/${ctx.tid}/leads/${l.id}`, b); };
+const saveLead = (ctx, l) => { const b = { ...l }; delete b.id; b.updatedAt = Date.now(); l._base = b.updatedAt; if (b.messages && b.messages.length > 60) b.messages = b.messages.slice(-60); ctx.leads.set(l.id, { ...b, id: l.id }); return docs.guardedWrite(SYSTEM, `tenants/${ctx.tid}/leads/${l.id}`, b); };
 const saveInv = (ctx, i) => { const b = { ...i }; delete b.id; b.updatedAt = Date.now(); return docs.guardedWrite(SYSTEM, `tenants/${ctx.tid}/invoices/${i.id}`, b); };
 const saveAppt = (ctx, a) => { const b = { ...a }; delete b.id; b.updatedAt = Date.now(); return docs.guardedWrite(SYSTEM, `tenants/${ctx.tid}/appts/${a.id}`, b); };
 
@@ -120,17 +123,32 @@ function botCtx(ctx) {
 }
 async function aiReply(ctx, l) {
   const c = ctx.config, b = ctx.biz;
-  if (!AI_ON()) { const last = (l.messages || []).filter((m) => m.from === "cliente").slice(-1)[0]; return BOT.reply(botCtx(ctx), l, last ? last.text : ""); }
-  const convo = (l.messages || []).slice(-14).map((m) => (m.from === "cliente" ? "Cliente: " : "Empresa: ") + m.text).join("\n");
+  // 1) Siempre primero las reglas (gratis). 2) Solo si no saben responder y la empresa tiene créditos de IA, responde la IA.
+  const last = (l.messages || []).filter((m) => m.from === "cliente").slice(-1)[0];
+  const rules = BOT.reply(botCtx(ctx), l, last ? last.text : "");
+  // Módulo «Asesor con IA para su página web»: en el chat de la página, la IA responde cada mensaje (con los mismos créditos y topes)
+  const ases = l.channel === "web" && ASESOR.cfgOf(c).on;
+  if (!(rules.unknown || ases) || !ctx.feats.includes("ia") || !IA.on() || ctx.tenant.demo || l.demo || l.sim) return rules;
+  const iaRes = await IA.reservar(ctx.tid, l.id); if (!iaRes) return rules;
+  IA.avisar(ctx.tid, iaRes).catch(() => {});
+  const convo = (l.messages || []).slice(-10).map((m) => (m.from === "cliente" ? "Cliente: " : "Empresa: ") + ASESOR.ocultar(String(m.text || "").slice(0, 400))).join("\n");
+  const kc = ases ? await ASESOR.conocimiento(ctx.tid, c) : null;
   const slots = b.agendaOn ? freeSlots(ctx, 8) : [];
   const prompt = `Eres "${c.assistant || "Asistente virtual"}", el asistente virtual de ${c.company}. Respondes por ${CH_LABEL[l.channel] || "chat"} a un cliente potencial.
 Reglas:
 - Español latinoamericano neutro; trata al cliente de "usted". Tono ${TONES[c.tone] || "amable"}.
 - Respuesta corta, estilo chat: máximo 3 frases.
 - Usa SOLO la información de la empresa. No inventes precios, horarios ni servicios. Si no sabes algo, o el cliente pide una persona, o tiene una queja, responde con amabilidad que un asesor lo contactará pronto y marca "handoff": true.
-- Sin presionar, intenta conocer su nombre, qué necesita y un teléfono o correo, y propone el siguiente paso.
+${ases ? `- Eres el asesor comercial de la página web. Tu objetivo es llevar al visitante a comprar, inscribirse o agendar: resuelve su duda y propone siempre el siguiente paso concreto.
+- Si pide algo que la empresa no ofrece, dilo en una sola frase y ofrece la mejor alternativa que sí tenga.
+- No dejes ir ningún contacto: si dice que no, que lo va a pensar o se despide, pídele con amabilidad su nombre y su celular para enviarle la información (con su autorización de datos, Ley 1581).
+- Nunca pidas ni repitas números de tarjeta, contraseñas ni claves.
+- ${kc.casos ? "Solo pasa a una persona (\"handoff\": true) en estos casos: " + kc.casos + ". En lo demás sigue atendiendo tú." : "Pasa a una persona (\"handoff\": true) solo si el cliente lo pide, tiene una queja o necesita algo que no está en la información."}
+- Máximo 4 frases.` : "- Sin presionar, intenta conocer su nombre, qué necesita y un teléfono o correo, y propone el siguiente paso."}
 
-${kbText(ctx)}
+${kbText(ctx).slice(0, ases ? 5000 : 14000)}
+${ases && kc.notas ? "NOTAS DE LA EMPRESA PARA EL ASESOR:\n" + kc.notas : ""}
+${ases && kc.pagina ? "LO QUE DICE LA PÁGINA WEB DE LA EMPRESA (leída el " + fdate(kc.leida) + "):\n" + kc.pagina : ""}
 ${(b.catalog || []).length ? "CATÁLOGO:\n" + b.catalog.map((x) => `- ${x.n}: ${cop(x.p)}${x.d ? " (" + x.d + ")" : ""}`).join("\n") : ""}
 ${b.payLink ? "ENLACE DE PAGO: " + b.payLink : ""}
 Ahora: ${fdt(Date.now())} (${isOpen(ctx, Date.now()) ? "abierto" : "cerrado"}).
@@ -144,9 +162,17 @@ ${convo}
 
 Responde SOLO con un objeto JSON:
 {"reply":"","name":"","phone":"","email":"","interest":"3-6 palabras","score":0,"stage":"nuevo|contactado|interesado|propuesta","handoff":false,"book":"","service":"","unknown":"pregunta que no pudiste responder o vacío"}`;
-  try { const r = await ai.askJSON(prompt, { tier: "quick", tid: ctx.tid }); if (r && typeof r.reply === "string" && r.reply.trim()) return { ...r, ai: true }; }
-  catch (e) { console.error("IA", ctx.tid, e.message); }
-  return ruleReply(ctx, l);
+  let cobrado = false;
+  try {
+    const r = await ai.ask(prompt + "\n\nResponde solo con JSON válido.", { tier: "quick", tid: ctx.tid, maxTokens: ases ? 320 : 350 });
+    cobrado = true; await IA.anotar(ctx.tid, r.usage);
+    const j = ai.parseJSON(r.text);
+    if (j && typeof j.reply === "string" && j.reply.trim()) { const { botState, ...rest } = j;
+      // Lo que las reglas ya sacaron del mensaje (nombre, celular, correo) no se pierde si la IA no lo devolvió
+      const cel = (String(last ? last.text : "").match(/(?:\+?57[ -]?)?\b3\d{2}[ -]?\d{3}[ -]?\d{4}\b/) || [])[0] || "";
+      return { ...rest, name: rest.name || rules.name || "", phone: rest.phone || rules.phone || cel.replace(/\D/g, "").slice(-10), email: rest.email || rules.email || "", ai: true, botState: rules.botState }; }
+  } catch (e) { console.error("IA", ctx.tid, e.message); if (!cobrado) await IA.devolver(ctx.tid).catch(() => {}); /* si la IA ya respondió, el costo existe y el crédito no se devuelve */ }
+  return rules;
 }
 
 async function botAnswer(ctx, l) {
@@ -183,6 +209,7 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
   const ctx = await loadTenant(tid);
   const t = Date.now(), nt = norm(text).trim();
   let l = [...ctx.leads.values()].find((x) => (key && x.extKey === key) || (phone && ch.digits(x.phone).slice(-10) === ch.digits(phone).slice(-10) && ch.digits(phone).length >= 7));
+  if (!l) { const ar = await mant.findArchived(tid, key, phone).catch(() => null); if (ar) { l = { ...ar, messages: ar.messages || [], restoredAt: t }; ctx.leads.set(l.id, l); } }
   if (!l) {
     l = { id: uid("l"), name: name || "", phone: phone || "", email: email || "", channel, extKey: key || "", interest: "", stage: "nuevo", score: 20, value: 0, notes: "", sede: sede || "", createdAt: t, updatedAt: t, lastInboundAt: 0, lastOutboundAt: 0, awaiting: "", followStep: 0, followPaused: false, handoff: false, messages: [], stageLog: [{ stage: "nuevo", at: t }] };
     await autoAssign(ctx, l); fireWebhook(ctx, "prospecto_nuevo", l);
@@ -192,8 +219,15 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
   l.messages.push({ from: "cliente", text, at: t, ...(extId ? { ext: extId } : {}) });
   l.lastInboundAt = t;
   if (OPTOUT_RE.test(nt)) { l.optOut = t; l.followPaused = true; l.messages.push({ from: "auto", text: `Entendido. No le enviaremos más mensajes de ${ctx.config.company}. Si necesita algo, escríbanos.`, at: t + 1 }); l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
-  if (l.awaitSurvey && /^[1-5]$/.test(nt)) { l.csat = Number(nt); l.awaitSurvey = false; l.messages.push({ from: "auto", text: Number(nt) >= 4 ? "¡Muchas gracias por su calificación!" : "Gracias por su sinceridad. Un responsable revisará su caso.", at: t + 1 }); if (Number(nt) <= 3) { l.handoff = true; l.awaiting = "empresa"; } else l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
+  if (care.surveyPending(l, t) && /^[1-5]$/.test(nt)) { l.csat = Number(nt); l.csatAt = t; l.csatLog = [...(l.csatLog || []), { v: Number(nt), at: t }].slice(-12); l.awaitSurvey = false; l.messages.push({ from: "auto", text: Number(nt) >= 4 ? "¡Muchas gracias por su calificación!" : "Gracias por su sinceridad. Un responsable revisará su caso.", at: t + 1 }); if (Number(nt) <= 3) { l.handoff = true; l.awaiting = "empresa"; } else l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
   if (ctx.biz.privacy.on && l.consent !== "aceptado" && l.consentAsked && YES_RE.test(nt)) { l.consent = "aceptado"; l.consentAt = t; }
+  // Cliente activo con un problema: se abre un caso de soporte y lo atiende una persona
+  if (l.stage === "ganado" && care.isProblem(text)) {
+    const open = (l.cases || []).find((x) => x.status === "abierto");
+    if (!open) { l.cases = [...(l.cases || []), { id: "cs" + t.toString(36), at: t, text: String(text).slice(0, 300), status: "abierto" }].slice(-20);
+      l.messages.push({ from: "auto", text: care.fill(care.careCfg(ctx.config).caseText, l, ctx.config.company), at: t + 1, caso: true }); l.lastOutboundAt = t + 1; }
+    l.handoff = true; l.awaiting = "empresa"; await saveLead(ctx, l); return ctx.leads.get(l.id);
+  }
   l.awaiting = "empresa"; l.followStep = 0; if (l.stage === "perdido") setStage(l, "contactado");
   await saveLead(ctx, l);
   const canBot = ctx.config.autoReply !== false && !l.followPaused && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !(l.handoff && l.owner);
@@ -203,25 +237,45 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
 
 /* ---------- envío real de lo que la app escribe (bandeja de salida) ---------- */
 const OUT = new Set(["bot", "auto", "agente"]);
+// Después de un envío (que puede tardar), se guardan SOLO las marcas de entrega sobre la versión más reciente,
+// para no borrar un mensaje que el cliente escribió mientras tanto.
+async function saveMarks(path, arrKey, keyOf, mine) {
+  const cur = await db.getDoc(path); if (!cur.exists) return;
+  const marks = new Map(mine.filter((x) => x.d).map((x) => [keyOf(x), x]));
+  const arr = (cur.data[arrKey] || []).map((x) => { const m = marks.get(keyOf(x)); return m && (!x.d || /^espera/.test(x.d)) ? { ...x, d: m.d, dAt: m.dAt } : x; });
+  await db.setDoc(path, { ...cur.data, [arrKey]: arr }); // sin ganchos, para no repetir el envío
+}
+const isDemoT = (ctx) => !!(ctx.tenant && ctx.tenant.demo);
+// Las respuestas de los clientes a los correos van a la empresa (correo de atención o el de su administrador), no a SofIA
+const replyOf = (ctx) => (ctx.conns.email && ctx.conns.email.data && ctx.conns.email.data.address) || (ctx.biz.digest && /@/.test(ctx.biz.digest.to || "") && ctx.biz.digest.to) || ((ctx.users || []).find((u) => u.role === "admin" && u.active !== false && u.email) || {}).email || "";
 async function dispatchLead(tid, path, l) {
   if (!l || l.demo || l.sim || !Array.isArray(l.messages)) return;
   const now = Date.now();
-  const pending = l.messages.filter((m) => OUT.has(m.from) && !m.d && now - (m.at || 0) < 15 * 60000);
+  // Los mensajes de posventa pueden esperar hasta 24 h si se acabó el cupo diario de correo
+  const pending = l.messages.filter((m) => OUT.has(m.from) && (!m.d || m.d === "espera: cupo de correo") && now - (m.at || 0) < (m.care ? 24 * 3600e3 : 15 * 60000));
   if (!pending.length) return;
   const ctx = await loadTenant(tid);
   const st = (k) => (ctx.conns[k] || {}).status === "activo";
   for (const m of pending) {
     try {
+      // La demostración pública nunca envía nada real (si no, serviría para mandar correos a cualquiera)
+      if (isDemoT(ctx)) { m.d = "demostración: no se envía"; m.dAt = Date.now(); continue; }
       if (l.optOut && m.from === "auto" && !/No le enviaremos más/.test(m.text)) { m.d = "omitido: pidió baja"; continue; }
-      if (l.channel === "web") m.d = "web";
+      const mailOk = l.email && /@/.test(l.email) && ch.mailOn();
+      // Posventa (saludos, plan, encuestas): por correo cuando hay correo, porque el cliente quizá no vuelva al chat
+      // y Meta no deja escribir por Messenger o Instagram después de 24 h del último mensaje del cliente
+      const late = Date.now() - (l.lastInboundAt || 0) > 24 * 3600e3;
+      if (m.care && mailOk && (!["instagram", "facebook"].includes(l.channel) || late)) {
+        if (!(await ch.cupo("posventa", tid))) { m.d = "espera: cupo de correo"; continue; }
+        await ch.sendEmail(l.email, `Un saludo de ${ctx.config.company}`, m.text + "\n\nSi no desea recibir más mensajes, responda este correo con la palabra BAJA.", { replyTo: replyOf(ctx), tid }); m.d = "ok: correo"; }
+      else if (l.channel === "web") m.d = "web";
       else if (l.channel === "instagram" || l.channel === "facebook") { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; }
-      else if (l.phone && st("whatsapp")) { await ch.sendWhatsApp(ctx.sec, l.phone, m.text, { lastInboundAt: l.lastInboundAt, company: ctx.config.company }); m.d = "ok"; }
-      else if (l.email && ch.digits(l.email) !== l.email && process.env.SMTP_URL) { await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text); m.d = "ok"; }
+      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) throw new Error("se acabó el cupo diario de correo"); await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: replyOf(ctx), tid }); m.d = "ok"; }
       else m.d = "sin canal activo";
     } catch (e) { m.d = "error: " + String(e.message).slice(0, 120); }
     m.dAt = Date.now();
   }
-  await db.setDoc(path, (({ id, ...x }) => x)(l)); // sin ganchos, para no repetir el envío
+  await saveMarks(path, "messages", (m) => `${m.from}|${m.at}`, pending);
 }
 async function dispatchInvoice(tid, path, inv) {
   if (!inv || inv.demo || inv.leadId) return; // si tiene prospecto, el mensaje ya sale por la conversación
@@ -230,33 +284,30 @@ async function dispatchInvoice(tid, path, inv) {
   const ctx = await loadTenant(tid);
   for (const r of pending) {
     try {
-      if ((inv.channel || "whatsapp") === "whatsapp" && (ctx.conns.whatsapp || {}).status === "activo" && inv.phone) { await ch.sendWhatsApp(ctx.sec, inv.phone, r.text, { company: ctx.config.company }); r.d = "ok"; }
-      else if (inv.email && process.env.SMTP_URL) { await ch.sendEmail(inv.email, `Recordatorio de pago · ${ctx.config.company}`, r.text); r.d = "ok"; }
+      if (isDemoT(ctx)) { r.d = "demostración: no se envía"; continue; }
+      if (inv.email && /@/.test(inv.email) && ch.mailOn()) { if (!(await ch.cupo("cobro", tid))) throw new Error("se acabó el cupo diario de correo"); await ch.sendEmail(inv.email, `Recordatorio de pago · ${ctx.config.company}`, r.text, { replyTo: replyOf(ctx), tid }); r.d = "ok"; }
       else r.d = "sin canal activo";
     } catch (e) { r.d = "error: " + String(e.message).slice(0, 120); }
   }
-  await db.setDoc(path, (({ id, ...x }) => x)(inv));
+  await saveMarks(path, "reminders", (r) => String(r.at), pending);
 }
 async function dispatchBilling(path, b) {
   const pending = (b.reminders || []).filter((r) => !r.d && Date.now() - (r.at || 0) < 15 * 60000);
   if (!pending.length) return;
   const users = await db.listCol(`tenants/${b.tid}/users`);
   const admins = users.map((u) => u.data).filter((u) => u.role === "admin" && u.active !== false && u.email);
-  const cfg = await db.getDoc(`tenants/${b.tid}/config/main`);
-  const psec = await db.getSecrets("_platform");
   for (const r of pending) {
     const out = [];
-    for (const a of admins) { try { await ch.sendEmail(a.email, `Gestión ComercIAl · ${b.concept}`, r.text); out.push("correo"); } catch {} }
-    const phone = cfg.exists && cfg.data.phone;
-    if (phone && psec.wa_phone_id) { try { await ch.sendWhatsApp(psec, phone, r.text, { company: "Gestión ComercIAl" }); out.push("WhatsApp"); } catch {} }
-    r.d = out.length ? "ok: " + out.join(", ") : "sin canal (configure SMTP o el WhatsApp de la plataforma)";
+    for (const a of admins) { try { await ch.sendEmail(a.email, `Agente-IA · ${b.concept}`, r.text, { sistema: true }); out.push("correo"); } catch {} }
+    r.d = out.length ? "ok: " + out.join(", ") : "sin canal (configure Brevo)";
   }
-  await db.setDoc(path, (({ id, ...x }) => x)(b));
+  await saveMarks(path, "reminders", (r) => String(r.at), pending);
 }
 
 /* ---------- avisos a otros sistemas (webhook de salida) ---------- */
 function fireWebhook(ctx, event, l) {
-  const c = ctx.conns.webhook; if (!c || c.status !== "activo" || !c.data?.outUrl) return;
+  const c = ctx.conns.webhook; if (!c || c.status !== "activo" || !c.data?.outUrl || isDemoT(ctx)) return;
+  if (!/^https:\/\//.test(c.data.outUrl) || /^https:\/\/(localhost|127\.|10\.|192\.168\.|169\.254\.|\[)/.test(c.data.outUrl)) return; // solo direcciones públicas con https
   const ev = c.data.events || "Ambos";
   if (event === "prospecto_nuevo" && ev === "Un prospecto cambia de etapa") return;
   if (event === "cambio_etapa" && ev === "Llega un prospecto nuevo") return;
@@ -266,13 +317,15 @@ function fireWebhook(ctx, event, l) {
 /* ---------- tareas programadas ---------- */
 async function runFollowups(ctx) {
   if (!ctx.feats.includes("followup") || ctx.config.autoFollow === false) return;
+  // Ley 2300: los seguimientos comerciales solo salen de lunes a viernes de 7 a 19 y sábados de 8 a 15
+  if (!collectAllowedAt(Date.now())) { due(Date.now() + 30 * 60000); return; }
   const steps = ctx.config.steps || [];
   for (const l of ctx.leads.values()) {
     if (l.demo || l.sim || l.optOut || l.followPaused || l.awaiting !== "cliente" || !l.lastOutboundAt || ["ganado", "perdido"].includes(l.stage)) continue;
     const i = l.followStep || 0; if (i >= steps.length) continue;
     if (Date.now() < l.lastOutboundAt + (Number(steps[i].hours) || 0) * 3600e3) { due(l.lastOutboundAt + (Number(steps[i].hours) || 0) * 3600e3); continue; }
     let text = fill(ctx, steps[i].text, l);
-    if (ctx.config.aiFollow && AI_ON()) { try { text = (await ai.ask(`Personaliza este mensaje de seguimiento de ${ctx.config.company} para un cliente que no ha respondido. Máximo 2 frases, español neutro, "usted", sin presionar. Mensaje base: "${text}". Interés: ${l.interest || "—"}. Devuelve solo el texto.`, { tid: ctx.tid })).text || text; } catch {} }
+    if (false) { /* seguimientos con IA: desactivado (solo se cobra la IA de las respuestas a clientes) */ try { text = (await ai.ask(`Personaliza este mensaje de seguimiento de ${ctx.config.company} para un cliente que no ha respondido. Máximo 2 frases, español neutro, "usted", sin presionar. Mensaje base: "${text}". Interés: ${l.interest || "—"}. Devuelve solo el texto.`, { tid: ctx.tid })).text || text; } catch {} }
     l.messages.push({ from: "auto", text, at: Date.now(), step: i + 1 }); l.lastOutboundAt = Date.now(); l.followStep = i + 1;
     await saveLead(ctx, l);
   }
@@ -282,6 +335,7 @@ async function runCollect(ctx) {
   const c = collectCfg(ctx); if (!c.enabled) return;
   if (!collectAllowedAt(Date.now())) { if (ctx.invoices.some((i) => !i.demo && balOf(i) > 0)) due(Date.now() + 30 * 60000); return; }
   for (const inv of ctx.invoices) {
+    if (!collectAllowedAt(Date.now())) break; // la ronda puede tardar: se revisa el horario en cada recordatorio
     if (inv.demo || inv.paused || balOf(inv) <= 0) continue;
     const sent = inv.sent || []; let k = c.steps.findIndex((_, i) => !sent.includes(i)); if (k < 0) continue;
     if (Date.now() < inv.dueAt + (Number(c.steps[k].offset) || 0) * DAY) { due(inv.dueAt + (Number(c.steps[k].offset) || 0) * DAY); continue; }
@@ -289,15 +343,52 @@ async function runCollect(ctx) {
     const same = ctx.invoices.filter((o) => (o.leadId && o.leadId === inv.leadId) || (o.phone && o.phone === inv.phone));
     if (same.some((o) => (o.reminders || []).some((r) => dayKey(r.at) === dayKey(Date.now())))) continue; // máximo uno por día
     const text = fillCollect(ctx, c.steps[k].text, inv), at = Date.now();
-    inv.reminders = [...(inv.reminders || []), { at, text, step: k + 1, auto: true, channel: inv.channel || "whatsapp" }].slice(-40);
+    inv.reminders = [...(inv.reminders || []), { at, text, step: k + 1, auto: true, channel: "email" }].slice(-40);
     inv.sent = [...new Set([...sent, ...Array.from({ length: k + 1 }, (_, i) => i)])];
     await saveInv(ctx, inv);
     const l = inv.leadId && ctx.leads.get(inv.leadId);
     if (l) { l.messages.push({ from: "auto", text, at, cobro: true }); l.lastOutboundAt = at; await saveLead(ctx, l); }
   }
 }
+async function runCare(ctx) {
+  if (!ctx.feats.includes("care") || isDemoT(ctx)) return;
+  // Saludos que esperaban cupo de correo: se reintentan en cada ronda (hasta 24 h)
+  for (const l of ctx.leads.values()) if ((l.messages || []).some((m) => m.care && m.d === "espera: cupo de correo" && Date.now() - m.at < 24 * 3600e3)) await dispatchLead(ctx.tid, `tenants/${ctx.tid}/leads/${l.id}`, l).catch(() => {});
+  const c = care.careCfg(ctx.config); if (!c.on) return;
+  const now = Date.now(), L = local(now);
+  // Ley 2300: lunes a viernes de 7 a 19, sábados de 8 a 15; nunca domingos ni festivos. Dentro de eso, el horario que elija la empresa.
+  const from = Math.max(Number(c.hourFrom) || 9, L.wd === 6 ? 8 : 7), to = Math.min(Number(c.hourTo) || 19, L.wd === 6 ? 15 : 19);
+  const okDay = L.wd !== 0 && !isHoliday(now);
+  if (!okDay || L.h < from || L.h >= to) {
+    const start = Date.UTC(L.y, L.m, L.d, from - TZ, 5);
+    due(okDay && L.h < from ? start : Date.UTC(L.y, L.m, L.d, 8 - TZ, 5) + DAY); return;
+  }
+  // Días anteriores sin envío (domingo o festivos): sus saludos salen hoy
+  let back = 0; while (back < 4) { const p = now - (back + 1) * DAY; if (local(p).wd === 0 || isHoliday(p)) back++; else break; }
+  const today = care.dayKey(now);
+  for (const l of ctx.leads.values()) {
+    if (l.stage !== "ganado" || l.optOut || l.demo || l.sim || l.followPaused || l.careDay === today) continue;
+    // Con un caso abierto o esperando a una persona, SofIA no envía saludos: primero se resuelve
+    // (un «quiero hablar con un asesor» de hace más de una semana, de antes de la compra, ya no frena la posventa)
+    // Un caso abierto frena todo; un pedido reciente de hablar con una persona solo frena la posventa, no las felicitaciones
+    if ((l.cases || []).some((x) => x.status === "abierto")) continue;
+    const soloFechas = !!(l.handoff && now - (l.lastInboundAt || 0) < 7 * DAY);
+    if (l.awaitSurvey && !care.surveyPending(l, now)) l.awaitSurvey = false; // encuesta sin respuesta en 7 días: se da por cerrada
+    // Si el saludo saldría por correo y no queda cupo hoy, se deja para mañana (no se marca como enviado)
+    if (l.email && ch.mailOn() && !(await ch.cupo("posventa", ctx.tid))) continue;
+    const m = care.careFor(c, l, ctx.config.company, now, back, soloFechas); if (!m) continue;
+    l.careLog = { ...(l.careLog || {}), ...(m.marks || {}), [m.k]: 1 };
+    if (!m.text) { await saveLead(ctx, l); continue; }
+    l.careDay = today;
+    if (m.survey) { l.awaitSurvey = true; l.lastSurveyAt = now; }
+    l.messages.push({ from: "auto", text: m.text, at: now, care: m.k.replace(/[@\d].*$/, "") || "x" }); l.lastOutboundAt = now; l.awaiting = "cliente";
+    await saveLead(ctx, l);
+  }
+  due(Date.UTC(L.y, L.m, L.d, from - TZ, 5) + DAY);
+}
 async function runAppts(ctx) {
   if (!ctx.biz.agendaOn) return;
+  if (!collectAllowedAt(Date.now())) { due(Date.now() + 30 * 60000); return; } // Ley 2300: recordatorios solo en horario permitido
   for (const a of ctx.appts) {
     if (a.status !== "programada" || a.reminded) continue;
     if (a.at - Date.now() > (Number(ctx.biz.remindHours) || 24) * 3600e3) { due(a.at - (Number(ctx.biz.remindHours) || 24) * 3600e3); continue; }
@@ -319,20 +410,27 @@ async function runDigest(ctx) {
   const text = `Resumen de ${ctx.config.company} · ${fdate(Date.now())}
 • Prospectos nuevos hoy: ${L.filter((x) => today(x.createdAt)).length}
 • Ventas ganadas hoy: ${won.length} (${cop(won.reduce((s, x) => s + (Number(x.value) || 0), 0))})
-• Clientes esperando respuesta: ${L.filter((x) => !["ganado", "perdido"].includes(x.stage) && (x.awaiting === "empresa" || x.handoff)).length}
+• Clientes esperando respuesta: ${L.filter((x) => x.stage !== "perdido" && (x.awaiting === "empresa" || x.handoff)).length}
 • Recaudado hoy: ${cop(rec)}
 • Cartera en mora: ${cop(mora.reduce((s, i) => s + balOf(i), 0))} en ${mora.length} cuentas
-• Citas de mañana: ${ctx.appts.filter((a) => a.status === "programada" && dayKey(a.at) === dayKey(Date.now() + DAY)).length}`;
+• Citas de mañana: ${ctx.appts.filter((a) => a.status === "programada" && dayKey(a.at) === dayKey(Date.now() + DAY)).length}
+• Clientes activos: ${L.filter((x) => x.stage === "ganado").length} · en riesgo: ${L.filter((x) => care.riskOf(x, care.careCfg(ctx.config))).length} · casos abiertos: ${L.reduce((s, x) => s + (x.cases || []).filter((c) => c.status === "abierto").length, 0)}${ASESOR.cfgOf(ctx.config).on ? (() => { const w = L.filter((x) => x.channel === "web" && (x.messages || []).some((m) => m.from === "cliente" && today(m.at)));
+  const sin = [...new Set(w.flatMap((x) => (x.messages || []).filter((m) => m.unknown && today(m.at)).map((m) => m.unknown)))].slice(0, 5);
+  return `\n• Asesor de la página web: ${w.length} conversaciones hoy · ${w.filter((x) => x.phone || x.email).length} dejaron sus datos${sin.length ? "\n  Preguntas sin respuesta (agréguelas a las Notas del asesor): " + sin.join(" | ") : ""}`; })() : ""}`;
   try {
-    if (/@/.test(d.to)) await ch.sendEmail(d.to, `Resumen del día · ${ctx.config.company}`, text);
-    else if ((ctx.conns.whatsapp || {}).status === "activo") await ch.sendWhatsApp(ctx.sec, d.to, text, { company: ctx.config.company });
+    if (/@/.test(d.to) && !isDemoT(ctx) && (await ch.cupo("resumen", ctx.tid))) await ch.sendEmail(d.to, `Resumen del día · ${ctx.config.company}`, text, { tid: ctx.tid });
   } catch (e) { console.error("resumen", ctx.tid, e.message); }
 }
+// Avisos de mensualidad con la regla vigente: se paga hasta el día 4; el día 5 sin pago se cierra (sin cuenta regresiva)
+const PAGO_TXT = "Pague en línea desde Agente-IA con todos los medios de pago (tarjeta débito o crédito, PSE, Nequi, llave Bre-B).";
+const BILL_STEPS = [
+  { offset: -3, text: "Hola {empresa}, ya está disponible su mensualidad de Agente-IA de {periodo} por {saldo}. Puede pagarla hasta el {vence}; si el día 5 no se ha pagado, el acceso se cierra. {pago}" },
+  { offset: 1, text: "{empresa}, el acceso a Agente-IA quedó cerrado por la mensualidad pendiente de {periodo} ({saldo}). Sus datos se conservan. {pago} Se reabre en el momento en que se confirma el pago." }];
 async function runBilling() {
   const s = await db.getDoc("platform/settings"); const bc = (s.exists && s.data.billing) || {};
   if (bc.enabled === false) return;
   if (!collectAllowedAt(Date.now())) { due(Date.now() + 30 * 60000); return; }
-  const steps = bc.steps || [{ offset: -3, text: "Hola {empresa}, su mensualidad de {periodo} por {saldo} vence el {vence}. {pago}" }, { offset: 0, text: "Hola {empresa}, hoy vence su mensualidad de {periodo} por {saldo}. {pago}" }, { offset: 5, text: "{empresa}, su mensualidad de {periodo} por {saldo} tiene 5 días de retraso." }, { offset: 15, text: "{empresa}, su mensualidad de {periodo} sigue pendiente ({saldo}). Comuníquese con nosotros para evitar la suspensión." }];
+  const steps = BILL_STEPS; // la regla es una sola para todas las apps: no se personaliza
   const MES = (m) => { const [y, mm] = String(m).split("-"); return mm ? ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"][Number(mm) - 1] + " " + y : ""; };
   for (const x of await db.listCol("billing")) {
     const b = x.data; if (b.paused || balOf(b) <= 0) continue;
@@ -340,8 +438,8 @@ async function runBilling() {
     if (Date.now() < b.dueAt + (Number(steps[k].offset) || 0) * DAY) { due(b.dueAt + (Number(steps[k].offset) || 0) * DAY); continue; }
     while (k + 1 < steps.length && b.dueAt + (Number(steps[k + 1].offset) || 0) * DAY <= Date.now()) k++;
     if ((b.reminders || []).some((r) => dayKey(r.at) === dayKey(Date.now()))) continue;
-    const tpl = b.period ? String(steps[k].text) : String(steps[k].text).replace(/mensualidad de Gestión ComercIAl de \{periodo\}|mensualidad de \{periodo\}/g, "pago de {periodo}");
-    const text = tpl.replaceAll("{empresa}", b.tenantName || "").replaceAll("{periodo}", b.period ? MES(b.period) : b.concept || "").replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{numero}", b.number || "").replaceAll("{pago}", bc.payInfo || "").replace(/\s+/g, " ").trim();
+    const tpl = b.period ? String(steps[k].text) : String(steps[k].text).replace(/mensualidad de Agente-IA de \{periodo\}|mensualidad de \{periodo\}/g, "pago de {periodo}");
+    const text = tpl.replaceAll("{empresa}", b.tenantName || "").replaceAll("{periodo}", b.period ? MES(b.period) : b.concept || "").replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{numero}", b.number || "").replaceAll("{pago}", PAGO_TXT).replace(/\s+/g, " ").trim();
     b.reminders = [...(b.reminders || []), { at: Date.now(), text, step: k + 1, auto: true }].slice(-30);
     b.sent = [...new Set([...sent, ...Array.from({ length: k + 1 }, (_, i) => i)])];
     await docs.guardedWrite(SYSTEM, "billing/" + x.id, b);
@@ -362,10 +460,10 @@ async function tick(only, force) {
     for (const t of tenants) {
       if (only && t.id !== only) continue;
       if (t.data.status === "suspendido" || cobro.cerrada(t.data)) continue;
-      try { const ctx = await loadTenant(t.id); await runFollowups(ctx); await runCollect(ctx); await runAppts(ctx); await runDigest(ctx); }
+      try { const ctx = await loadTenant(t.id); await runFollowups(ctx); await runCollect(ctx); await runAppts(ctx); await runCare(ctx); await runDigest(ctx); }
       catch (e) { console.error("tick", t.id, e.message); }
     }
-    if (!only) await runBilling();
+    if (!only) { try { await mant.genMonth(); await mant.daily(); await mant.trialMorning(); await ASESOR.semanal(); } catch (e) { console.error("mantenimiento", e.message); } await runBilling(); }
     nextDue = Math.min(Date.now() + 6 * 3600e3, ...dueList);
     return { ran: true, nextDue };
   } catch (e) { dirty = true; throw e; } finally { busy = false; }
@@ -384,4 +482,4 @@ docs.onWrite(async ({ path, data, prev }) => {
   if (s[0] === "billing" && s.length === 2) await dispatchBilling(path, data);
 });
 
-module.exports = { markDirty, tick, handleInbound, loadTenant, collectAllowedAt, isHoliday, botAnswer, fromIsoLocal, isoLocal };
+module.exports = { runCare, markDirty, tick, handleInbound, loadTenant, collectAllowedAt, isHoliday, botAnswer, fromIsoLocal, isoLocal };

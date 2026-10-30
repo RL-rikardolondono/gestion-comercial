@@ -10,7 +10,7 @@ async function ask(input, { tier = "quick", maxTokens = 900, tid = null } = {}) 
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw Object.assign(new Error("La IA no está configurada (falta ANTHROPIC_API_KEY)."), { code: "sampling_disabled" });
   const messages = typeof input === "string" ? [{ role: "user", content: input }] : input.map((m) => ({ role: m.role, content: String(m.content) }));
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const r = await fetch((process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com") + "/v1/messages", {
     method: "POST",
     headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({ model: MODELS[tier] || MODELS.default, max_tokens: maxTokens, messages }),

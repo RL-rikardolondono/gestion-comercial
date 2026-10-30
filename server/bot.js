@@ -67,7 +67,7 @@
       const i = Number(num || ord) - 1;
       if (st.slots[i]) {
         r.book = st.slots[i]; r.service = st.service || "cita";
-        r.reply = `Listo${lead.name || r.name ? ", " + String(lead.name || r.name).split(" ")[0] : ""}. Su ${r.service === "cita" ? "cita" : "cita de " + r.service} quedó para el ${String(c.fmt(r.book)).replace(/\.$/, "")}. Le enviaremos un recordatorio.${!lead.phone && !r.phone && lead.channel !== "whatsapp" ? " ¿Me regala un número de WhatsApp para confirmarle?" : ""}`;
+        r.reply = `Listo${lead.name || r.name ? ", " + String(lead.name || r.name).split(" ")[0] : ""}. Su ${r.service === "cita" ? "cita" : "cita de " + r.service} quedó para el ${String(c.fmt(r.book)).replace(/\.$/, "")}. Le enviaremos un recordatorio.${!lead.phone && !r.phone && !lead.email ? " ¿Me regala un número de celular o un correo para confirmarle?" : ""}`;
         r.score = Math.max(r.score, 75); r.stage = "propuesta"; st.slots = null; st.menu = false; return r;
       }
     }

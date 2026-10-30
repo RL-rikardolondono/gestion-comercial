@@ -1,4 +1,4 @@
-// Entradas públicas: webhooks de Meta (WhatsApp, Messenger, Instagram, anuncios), chat web,
+// Entradas públicas: webhooks de Meta (Messenger, Instagram, anuncios), chat web,
 // formulario y API de prospectos para otros sistemas.
 const express = require("express");
 const crypto = require("crypto");
@@ -9,7 +9,34 @@ const engine = require("./engine");
 const cors = (req, res, next) => { res.set("Access-Control-Allow-Origin", "*"); res.set("Access-Control-Allow-Headers", "Content-Type, Authorization"); res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); if (req.method === "OPTIONS") return res.sendStatus(204); next(); };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-async function tenantOk(tid) { const t = await db.getDoc(`tenants/${tid}`); return t.exists && t.data.status !== "suspendido" && !require("./cobro").cerrada(t.data) ? t.data : null; }
+// La empresa se consulta como máximo cada minuto (las visitas a la página no despiertan la base en cada mensaje)
+const tCache = new Map();
+async function tenantOk(tid) {
+  if (!db.validPath(`tenants/${tid}`, true)) return null;
+  const c = tCache.get(tid), mv = db.mem.doc.get(`tenants/${tid}`);
+  let t = c && Date.now() - c.at < 60000 && c.v === mv ? c.t : null;
+  if (!t) { t = await db.getDoc(`tenants/${tid}`); tCache.set(tid, { t, at: Date.now(), v: db.mem.doc.get(`tenants/${tid}`) }); }
+  return t.exists && t.data.status !== "suspendido" && !require("./cobro").cerrada(t.data) ? t.data : null;
+}
+// Lista de conversaciones en memoria mientras no cambie (para el chat web, que pregunta cada 5 segundos)
+const lCache = new Map();
+async function leadsOf(tid) {
+  const p = `tenants/${tid}/leads`, rev = db.mem.col.get(p), c = lCache.get(tid);
+  if (c && rev && c.rev === rev) return c.list;
+  const list = await db.listCol(p); if (!db.mem.col.get(p)) db.bumpCol(p);
+  lCache.set(tid, { rev: db.mem.col.get(p), list }); return list;
+}
+// Freno a abusos en las entradas públicas: por dirección IP, por minuto
+const hits = new Map();
+function limit(max) {
+  return (req, res, next) => {
+    const k = (req.ip || "") + "|" + req.route.path; // con «trust proxy» req.ip es la IP real (no la que escriba el cliente)
+    const now = Date.now(), h = hits.get(k);
+    if (!h || now - h.at > 60000) hits.set(k, { n: 1, at: now }); else if (++h.n > max) return res.status(429).json({ error: "Demasiadas solicitudes. Espere un momento." });
+    if (hits.size > 5000) for (const [kk, v] of hits) if (now - v.at > 60000) hits.delete(kk);
+    next();
+  };
+}
 
 function router() {
   const r = express.Router();
@@ -26,17 +53,9 @@ function router() {
     const body = req.body || {};
     try {
       for (const entry of body.entry || []) {
-        // WhatsApp
+        // WhatsApp no se recibe: Agente-IA no usa WhatsApp (directiva de SkyNet Genesis). Solo anuncios de Meta, Messenger e Instagram.
         for (const c of entry.changes || []) {
           const v = c.value || {};
-          if (c.field === "messages" && v.messaging_product === "whatsapp") {
-            const tid = await db.findTenantBySecret("wa_phone_id", v.metadata?.phone_number_id); if (!tid || !(await tenantOk(tid))) continue;
-            const names = Object.fromEntries((v.contacts || []).map((x) => [x.wa_id, x.profile?.name || ""]));
-            for (const m of v.messages || []) {
-              const text = m.text?.body || m.button?.text || m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || (m.type !== "text" ? `[El cliente envió ${m.type === "image" ? "una imagen" : m.type === "audio" ? "un audio" : m.type === "document" ? "un documento" : "un archivo"}]` : "");
-              await engine.handleInbound(tid, { channel: "whatsapp", phone: "+" + m.from, name: names[m.from], text, extId: "wa:" + m.id });
-            }
-          }
           if (c.field === "leadgen") {
             const pageId = v.page_id || entry.id;
             const tid = await db.findTenantBySecret("page_id", pageId); if (!tid || !(await tenantOk(tid))) continue;
@@ -65,19 +84,24 @@ function router() {
     const t = await tenantOk(req.params.tid); if (!t) return res.status(404).json({ error: "No disponible" });
     const cfg = await db.getDoc(`tenants/${req.params.tid}/config/main`); const conns = await db.getDoc(`tenants/${req.params.tid}/config/connections`);
     const w = (conns.exists && conns.data.web && conns.data.web.data) || {};
-    res.json({ company: cfg.data?.company || t.name, assistant: cfg.data?.assistant || "Asistente", greeting: w.greeting || "Hola, ¿en qué le podemos ayudar?", color: w.color || "#1E3A4C" });
+    const A = require("./asesor").cfgOf(cfg.data); const ases = A.on && ["pro", "empresarial"].includes(t.plan);
+    res.json({ company: cfg.data?.company || t.name, assistant: cfg.data?.assistant || "Asistente", greeting: w.greeting || "Hola, ¿en qué le podemos ayudar?", color: w.color || "#0B4F8A", asesor: ases, wa: ases && A.wa ? A.wa : "" });
   });
-  r.post("/api/public/:tid/chat", cors, async (req, res) => {
+  r.post("/api/public/:tid/chat", cors, limit(20), async (req, res) => {
     const { sid, text, name } = req.body || {}; const tid = req.params.tid;
     if (!(await tenantOk(tid)) || !sid || !text || String(text).length > 2000) return res.status(400).json({ error: "Solicitud inválida" });
     const conns = await db.getDoc(`tenants/${tid}/config/connections`);
     if (!(conns.exists && conns.data.web && conns.data.web.status === "activo")) return res.status(403).json({ error: "El chat no está activo" });
-    const l = await engine.handleInbound(tid, { channel: "web", key: "web:" + String(sid).slice(0, 60), name, text: String(text) });
+    // Asesor de la página: solo responde en las páginas que registró la empresa; lo sensible (tarjetas, claves) no se guarda
+    const A = require("./asesor"); const cfg = await db.getDoc(`tenants/${tid}/config/main`);
+    if (!A.origenOk(cfg.data, req.headers.origin)) return res.status(403).json({ error: "Este chat no está autorizado en esta página." });
+    const l = await engine.handleInbound(tid, { channel: "web", key: "web:" + String(sid).slice(0, 60), name, text: A.ocultar(String(text)) });
     res.json({ messages: publicMsgs(l, 0) });
   });
-  r.get("/api/public/:tid/chat", cors, async (req, res) => {
+  r.get("/api/public/:tid/chat", cors, limit(40), async (req, res) => {
     const tid = req.params.tid, sid = String(req.query.sid || ""), after = Number(req.query.after || 0);
-    const leads = await db.listCol(`tenants/${tid}/leads`);
+    if (!sid || !(await tenantOk(tid))) return res.json({ messages: [] });
+    const leads = await leadsOf(tid);
     const l = leads.map((x) => x.data).find((x) => x.extKey === "web:" + sid);
     res.json({ messages: l ? publicMsgs(l, after) : [] });
   });
@@ -89,7 +113,7 @@ function router() {
     const priv = (c.biz && c.biz.privacy) || { on: true };
     res.type("html").send(formPage(req.params.tid, c.company || t.name, priv));
   });
-  r.post("/api/public/:tid/form", cors, async (req, res) => {
+  r.post("/api/public/:tid/form", cors, limit(6), async (req, res) => {
     const tid = req.params.tid; const f = req.body || {};
     if (!(await tenantOk(tid)) || !f.name || String(f.name).length > 120) return res.status(400).json({ error: "Escriba su nombre" });
     const cfg = await db.getDoc(`tenants/${tid}/config/main`); const c = cfg.data || {};
@@ -100,7 +124,7 @@ function router() {
   });
 
   /* ---------- API de prospectos (plan Empresarial) ---------- */
-  r.post("/api/v1/:tid/prospectos", cors, express.json(), async (req, res) => {
+  r.post("/api/v1/:tid/prospectos", cors, limit(60), async (req, res) => {
     const tid = req.params.tid, t = await tenantOk(tid); if (!t) return res.status(404).json({ error: "Empresa no disponible" });
     if (t.plan !== "empresarial") return res.status(403).json({ error: "La API está en el plan Empresarial" });
     const sec = await db.getSecrets(tid); const tok = (req.headers.authorization || "").replace(/^Bearer\s+/, "");
@@ -120,16 +144,16 @@ function publicMsgs(l, after) {
 function formPage(tid, company, priv) {
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contacto · ${esc(company)}</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700&family=Public+Sans:wght@400;600&display=swap">
-<style>body{margin:0;background:#EEF2F1;color:#15232B;font-family:"Public Sans",system-ui,sans-serif}main{max-width:480px;margin:0 auto;padding:24px 16px}
-.card{background:#fff;border-radius:12px;padding:20px;border:1px solid #D2DBDA}h1{font-family:"Barlow Condensed",sans-serif;font-size:30px;margin:0 0 4px;color:#1E3A4C}
-label{display:block;font-size:13px;font-weight:600;margin-top:12px}input,textarea{width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #D2DBDA;border-radius:8px;font:inherit}
-button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:8px;background:#1E3A4C;color:#fff;font-weight:600;font-size:15px;cursor:pointer}.ok{color:#1F8A4C;font-weight:600}.err{color:#B93A27}
+<style>body{margin:0;background:#F4F8FB;color:#1C2B39;font-family:"Public Sans",system-ui,sans-serif}main{max-width:480px;margin:0 auto;padding:24px 16px}
+.card{background:#fff;border-radius:12px;padding:20px;border:1px solid #DCE5EE}h1{font-family:"Barlow Condensed",sans-serif;font-size:30px;margin:0 0 4px;color:#0B4F8A}
+label{display:block;font-size:13px;font-weight:600;margin-top:12px}input,textarea{width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit}
+button{margin-top:16px;width:100%;padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer}.ok{color:#1F8A4C;font-weight:600}.err{color:#B93A27}
 .chk{display:flex;gap:8px;font-weight:400;align-items:flex-start}.chk input{width:auto;margin-top:3px}</style></head><body><main><div class="card">
-<h1>${esc(company)}</h1><p style="margin:0;color:#3E4F57">Déjenos sus datos y le escribimos en minutos.</p>
-<form id="f"><label>Nombre completo<input name="name" required></label><label>WhatsApp o teléfono<input name="phone" inputmode="tel"></label><label>Correo<input name="email" type="email"></label>
+<h1>${esc(company)}</h1><p style="margin:0;color:#5D6B78">Déjenos sus datos y le escribimos en minutos.</p>
+<form id="f"><label>Nombre completo<input name="name" required></label><label>Celular<input name="phone" inputmode="tel"></label><label>Correo<input name="email" type="email"></label>
 <label>¿Qué le interesa?<input name="interest"></label><label>Mensaje<textarea name="msg" rows="3"></textarea></label>
 ${priv.on !== false ? `<label class="chk"><input type="checkbox" name="consent" required> Autorizo el tratamiento de mis datos personales según la política de ${esc(company)} (Ley 1581 de 2012).${priv.url ? ` <a href="${esc(priv.url)}" target="_blank">Ver política</a>` : ""}</label>` : ""}
-<button>Enviar</button><p id="m" role="status"></p></form></div></main>
+<button>Enviar</button><p id="m" role="status"></p></form></div><p style="text-align:center;font-size:12px;color:#5D6B78;margin-top:14px">Con tecnología de <b>SkyNet Genesis</b> · contacto@skynetgenesis.com</p></main>
 <script>document.getElementById("f").onsubmit=async e=>{e.preventDefault();const f=e.target,m=document.getElementById("m"),b=f.querySelector("button");b.disabled=true;
 const d=Object.fromEntries(new FormData(f));d.consent=!!f.consent?.checked;try{const r=await fetch("/api/public/${tid}/form",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});const j=await r.json();
 if(r.ok){f.innerHTML='<p class="ok">'+j.thanks+'</p>'}else{m.className="err";m.textContent=j.error;b.disabled=false}}catch{m.className="err";m.textContent="No se pudo enviar. Intente de nuevo.";b.disabled=false}}</script></body></html>`;
@@ -138,11 +162,11 @@ if(r.ok){f.innerHTML='<p class="ok">'+j.thanks+'</p>'}else{m.className="err";m.t
 // Burbuja de chat para pegar en cualquier sitio web
 const WIDGET = `(function(){var s=document.currentScript,T=s.getAttribute("data-empresa"),B=(new URL(s.src)).origin,C=s.getAttribute("data-color");
 if(!T||window.__gcw)return;window.__gcw=1;var sid=localStorage.getItem("gcw_"+T);if(!sid){sid=Math.random().toString(36).slice(2)+Date.now().toString(36);try{localStorage.setItem("gcw_"+T,sid)}catch(e){}}
-var last=0,open=false,info={company:"",greeting:"Hola, ¿en qué le podemos ayudar?",color:C||"#1E3A4C"};
-var st=document.createElement("style");st.textContent=".gcw-b{position:fixed;right:18px;bottom:18px;width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:2147483000;color:#fff;font:600 24px system-ui}.gcw-p{position:fixed;right:18px;bottom:88px;width:340px;max-width:calc(100vw - 36px);height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.25);display:none;flex-direction:column;overflow:hidden;z-index:2147483000;font:14px system-ui;color:#15232B}.gcw-h{padding:12px 14px;color:#fff;font-weight:600}.gcw-m{flex:1;overflow:auto;padding:12px;background:#EEF2F1;display:flex;flex-direction:column;gap:8px}.gcw-x{max-width:82%;padding:8px 11px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}.gcw-c{align-self:flex-end;background:#fff;border:1px solid #D2DBDA}.gcw-e{align-self:flex-start;background:#DCE6EC}.gcw-f{display:flex;gap:6px;padding:8px;border-top:1px solid #D2DBDA}.gcw-f input{flex:1;padding:9px;border:1px solid #D2DBDA;border-radius:8px;font:inherit}.gcw-f button{border:0;border-radius:8px;padding:0 14px;color:#fff;font-weight:600;cursor:pointer}";document.head.appendChild(st);
+var last=0,open=false,info={company:"",greeting:"Hola, ¿en qué le podemos ayudar?",color:C||"#0B4F8A"};
+var st=document.createElement("style");st.textContent=".gcw-b{position:fixed;right:18px;bottom:18px;width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.25);z-index:2147483000;color:#fff;font:600 24px system-ui}.gcw-p{position:fixed;right:18px;bottom:88px;width:340px;max-width:calc(100vw - 36px);height:460px;max-height:calc(100vh - 120px);background:#fff;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.25);display:none;flex-direction:column;overflow:hidden;z-index:2147483000;font:14px system-ui;color:#1C2B39}.gcw-h{padding:12px 14px;color:#fff;font-weight:600}.gcw-m{flex:1;overflow:auto;padding:12px;background:#F4F8FB;display:flex;flex-direction:column;gap:8px}.gcw-x{max-width:82%;padding:8px 11px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}.gcw-c{align-self:flex-end;background:#fff;border:1px solid #DCE5EE}.gcw-e{align-self:flex-start;background:#DCE6EC}.gcw-f{display:flex;gap:6px;padding:8px;border-top:1px solid #DCE5EE}.gcw-f input{flex:1;padding:9px;border:1px solid #DCE5EE;border-radius:8px;font:inherit}.gcw-f button{border:0;border-radius:8px;padding:0 14px;color:#fff;font-weight:600;cursor:pointer}";document.head.appendChild(st);
 var b=document.createElement("button");b.className="gcw-b";b.setAttribute("aria-label","Abrir chat");b.textContent="💬";var p=document.createElement("div");p.className="gcw-p";p.innerHTML='<div class="gcw-h"></div><div class="gcw-m"></div><form class="gcw-f"><input placeholder="Escriba su mensaje" aria-label="Mensaje"><button>Enviar</button></form>';
 document.body.appendChild(b);document.body.appendChild(p);var H=p.querySelector(".gcw-h"),M=p.querySelector(".gcw-m"),F=p.querySelector("form"),I=F.querySelector("input");
-function col(){b.style.background=info.color;H.style.background=info.color;F.querySelector("button").style.background=info.color;H.textContent=info.company||"Chat"}
+function col(){b.style.background=info.color;H.style.background=info.color;F.querySelector("button").style.background=info.color;H.textContent=(info.asesor&&info.assistant?info.assistant+" · ":"")+(info.company||"Chat");if(info.wa&&!p.querySelector(".gcw-wa")){var a=document.createElement("a");a.className="gcw-wa";a.href="https://wa.me/"+info.wa;a.target="_blank";a.rel="noopener";a.textContent="Hablar con una persona";a.style.cssText="display:block;text-align:center;font:600 12.5px system-ui;padding:6px;color:"+info.color;p.insertBefore(a,F)}}
 function add(m){var d=document.createElement("div");d.className="gcw-x "+(m.from==="cliente"?"gcw-c":"gcw-e");d.textContent=m.text;M.appendChild(d);M.scrollTop=M.scrollHeight;if(m.at>last)last=m.at}
 fetch(B+"/api/public/"+T+"/info").then(function(r){return r.json()}).then(function(j){info=Object.assign(info,j);col();add({from:"empresa",text:info.greeting,at:0})}).catch(col);
 function poll(){fetch(B+"/api/public/"+T+"/chat?sid="+sid+"&after="+last).then(function(r){return r.json()}).then(function(j){(j.messages||[]).forEach(add)}).catch(function(){})}
