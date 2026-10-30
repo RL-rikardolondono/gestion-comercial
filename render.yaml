@@ -36,7 +36,7 @@ services:
       - key: BREVO_API_KEY       # correo gratis (300 al día) con Brevo
         sync: false
       - key: MAIL_FROM          # remitente verificado en Brevo
-        value: "SofIA · Agente-IA <no-responder@skynetgenesis.com>"
+        value: "SofIA · Agente-IA <sofia@skynetgenesis.com>"   # remitente verificado en Brevo (30 oct 2026)
       - key: DEMO_PASSWORD      # opcional: crea la cuenta demo@skynetgenesis.com con una empresa de ejemplo
         sync: false
       - key: AI_ENABLED          # IA solo para empresas que compran paquetes en el Market (sin paquete, SofIA responde por reglas)
