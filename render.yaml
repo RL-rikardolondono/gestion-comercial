@@ -30,7 +30,7 @@ services:
       - key: ADMIN_NAME
         value: Superadministrador
       - key: APP_ORIGIN
-        value: https://agente-ia.skynetgenesis.com,https://comercial.skynetgenesis.com
+        value: https://comercial.skynetgenesis.com,https://agente-ia.skynetgenesis.com   # la primera es la que va en los enlaces de los correos (agente-ia aún sin DNS)
       - key: META_APP_SECRET
         sync: false
       - key: BREVO_API_KEY       # correo gratis (300 al día) con Brevo
