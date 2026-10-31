@@ -3,7 +3,7 @@
 <meta name="gc-api" content="https://api-comercial.skynetgenesis.com">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#F4F8FB}img{max-width:100%}[hidden]{display:none!important}</style>
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icono.svg" type="image/svg+xml"><meta name="theme-color" content="#0B4F8A">
-<script src="shim.js"></script>
+<script src="shim.js?v=20261031"></script>
 <script>if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});</script>
 </head><body>
 <title>Agente-IA</title>
@@ -572,8 +572,9 @@ function demoBar(){ const on=!!(window.GC_USER&&window.GC_USER.demo); document.b
   if(!on){ if(el) el.remove(); return; } if(el) return;
   const msg=encodeURIComponent("Hola, quiero la prueba gratis de 15 días de Agente-IA para mi empresa.");
   el=document.createElement("div"); el.id="demoBar"; el.className="demo-bar";
-  el.innerHTML=`<span><b>¿Quiere esto para su empresa?</b> 15 días gratis, sin tarjeta.</span><a class="btn primary" href="https://wa.me/573044375758?text=${msg}" target="_blank" rel="noopener">Quiero mi prueba gratis</a>${canView("planes")?'<button class="btn" data-view="planes">Ver planes</button>':""}<a class="btn wa sm" href="https://wa.me/573044375758?text=${encodeURIComponent("Hola, tengo una pregunta sobre Agente-IA.")}" target="_blank" rel="noopener">Asesor</a>`;
-  document.body.appendChild(el); }
+  el.innerHTML=`<span><b>¿Quiere esto para su empresa?</b> 15 días gratis, sin tarjeta.</span><a class="btn primary" href="#registro" id="demoReg">Crear mi cuenta gratis</a>${canView("planes")?'<button class="btn" data-view="planes">Ver planes</button>':""}<a class="btn wa sm" href="https://wa.me/573044375758?text=${encodeURIComponent("Hola, tengo una pregunta sobre Agente-IA.")}" target="_blank" rel="noopener">Asesor</a>`;
+  document.body.appendChild(el);
+  const rg=document.getElementById("demoReg"); if(rg) rg.onclick=e=>{ e.preventDefault(); try{ ["gc_token","atd_me","atd_tid","atd_view"].forEach(k=>localStorage.removeItem(k)); }catch{} location.hash="registro"; location.reload(); }; }
 function cerradoPagoGC(ep){ return `<div role="alert" style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:16px"><div class="panel" style="max-width:620px;width:100%;padding:24px"><h2 style="margin:0 0 8px">El acceso está cerrado por pago</h2><p><span class="chip hand">Cerrada por pago</span></p><p>${ep.prueba?`La prueba gratis de ${esc(tenant().name||S.config.company||"su empresa")} terminó el ${fechaPago(ep.hasta)}.`:`${esc(tenant().name||S.config.company||"Su empresa")} tenía la mensualidad pagada hasta el ${fechaPago(ep.hasta)}. Según las condiciones del servicio, el día 5 sin pago se cierra el acceso.`} Mientras tanto, el asistente no responde a sus clientes.</p><p>Sus datos se conservan completos. Pague en línea aquí mismo: el acceso se abre solo en el momento en que el pago queda confirmado. No se cobran los meses que estuvo cerrado.</p>${payBox(true)}${SRV?'<div class="row" style="margin-top:12px"><button class="btn ghost" data-srv="logout">Cerrar sesión</button></div>':""}<div style="margin-top:16px">${sgBrand()}</div></div></div>`; }
 const plan = () => PLANS[tenant().plan] || PLANS.pro;
 const featOn = f => plan().feats.includes(f);
@@ -2796,7 +2797,10 @@ function subscribeTenant(){
   const toMap = snap => { const m=new Map(); snap.docs.forEach(d=>{ if(d.exists) m.set(d.id,{...JSON.parse(JSON.stringify(d.data())), id:d.id}); }); return m; };
   const tid=S.tid, mine=f=>(...a)=>{ if(S.tid===tid) f(...a); };
   tenantUnsubs.push(
-    db.doc(P("config/main")).onSnapshot(mine(snap=>{ S.config = snap.exists ? {...structuredClone(DEFAULT_CONFIG), ...JSON.parse(JSON.stringify(snap.data()))} : structuredClone(DEFAULT_CONFIG); S.configLoaded=true; render(); }), ()=>{}),
+    db.doc(P("config/main")).onSnapshot(mine(snap=>{ S.config = snap.exists ? {...structuredClone(DEFAULT_CONFIG), ...JSON.parse(JSON.stringify(snap.data()))} : structuredClone(DEFAULT_CONFIG); S.configLoaded=true;
+      // Empresa que se registró sola: al primer ingreso del administrador se aplica la plantilla de su sector (una sola vez)
+      if(S.config.tplPending && !isProv() && can("config")){ const tpl=SECTOR_TPL[S.config.sector]; const patch={tplPending:false, ...(tpl?{assistant:tpl.assistant, services:tpl.services, faqs:tpl.faqs, biz:{...BIZ_DEFAULT, services:tpl.agendaServices, agendaOn:tpl.agendaServices.length>0}}:{})}; writeConfig(patch); }
+      render(); }), ()=>{}),
     db.collection(P("users")).onSnapshot(mine(snap=>{ S.users=toMap(snap); render(); }), ()=>{}),
     db.doc(P("config/logo")).onSnapshot(mine(snap=>{ S.logo = snap.exists ? String(snap.data().data||"") : ""; render(); }), ()=>{}),
     db.doc(P("config/connections")).onSnapshot(mine(snap=>{ S.conns = snap.exists ? JSON.parse(JSON.stringify(snap.data())) : {}; render(); }), ()=>{}),

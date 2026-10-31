@@ -32,6 +32,7 @@
       '<button style="padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Ingresar</button>' +
       '<div id="gc-err" role="status" style="color:#B93A27;font-size:13px"></div>' +
       '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px"><a href="#" id="gc-forgot" style="color:#0B4F8A">¿Olvidó su contraseña?</a><a href="#" id="gc-demo" style="color:#0E8571;font-weight:600">Probar la demostración</a></div>' +
+      '<a href="#registro" id="gc-reg" style="display:block;text-align:center;padding:11px;border:1.5px solid #0B4F8A;border-radius:8px;color:#0B4F8A;font-weight:700;text-decoration:none">Crear la cuenta de mi empresa · 15 días gratis</a>' +
       '<div id="gc-demobox" hidden style="border:1px solid #DCE5EE;border-radius:10px;padding:10px;background:#E3F6F2;font-size:13px">Entre a la «Empresa Demo» como:<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
       '<button type="button" data-demo="admin" style="padding:8px 10px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;cursor:pointer">Administrador</button>' +
       '<button type="button" data-demo="supervisor" style="padding:8px 10px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;cursor:pointer">Supervisor</button>' +
@@ -52,6 +53,43 @@
       errEl.style.color = "#5D6B78"; errEl.textContent = "Enviando…";
       post("/api/auth/olvido", { email: em }).then(function (x) { errEl.style.color = "#0E8571"; var mk = em.replace(/^(.{2})[^@]*(@.*)$/, function (_, a, d) { return a + "\u2022\u2022\u2022\u2022\u2022\u2022" + d; }); errEl.textContent = "Si " + mk + " tiene una cuenta, le enviamos un enlace para crear una contraseña nueva. Revise también la carpeta de correo no deseado."; }).catch(function () { errEl.style.color = "#B93A27"; errEl.textContent = "No hay conexión con el servidor."; });
     };
+    // Registro propio de la empresa (15 días de prueba gratis, sin tarjeta)
+    var IN = 'display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit';
+    function registro() {
+      var f0 = document.getElementById("gc-login");
+      var sec = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Comercio / ferretería", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos"];
+      f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">Cree la cuenta de su empresa</div>' +
+        '<div style="color:#5D6B78;margin-top:-8px;font-size:14px">15 días de prueba gratis, sin tarjeta. Al terminar, si quiere seguir, paga la mensualidad en línea.</div>' +
+        '<label style="font-size:13px;font-weight:600">Nombre de la empresa<input name="empresa" required maxlength="80" autocomplete="organization" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Sector<select name="sector" style="' + IN + '">' + sec.map(function (x) { return '<option>' + x + '</option>'; }).join("") + '<option value="">Otro</option></select></label>' +
+        '<label style="font-size:13px;font-weight:600">Ciudad<input name="ciudad" maxlength="60" autocomplete="address-level2" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Su nombre completo<input name="nombre" required maxlength="80" autocomplete="name" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Su correo (aquí le llega el enlace para crear la contraseña)<input name="correo" type="email" required maxlength="120" autocomplete="email" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Celular<input name="celular" type="tel" required maxlength="20" inputmode="tel" placeholder="300 123 4567" autocomplete="tel" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Plan que quiere probar<select name="plan" style="' + IN + '"><option value="basico">Básico · $190.000/mes</option><option value="pro" selected>Profesional · $390.000/mes</option><option value="empresarial">Empresarial · $790.000/mes</option></select></label>' +
+        '<input name="web" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">' +
+        '<label style="display:grid;grid-template-columns:20px 1fr;gap:8px;font-size:12px;color:#5D6B78"><input name="acepto" type="checkbox" style="margin-top:2px"><span>Acepto las condiciones del servicio de Agente-IA y autorizo a SkyNet Genesis a tratar estos datos para crear y atender mi cuenta, según la Ley 1581 de 2012. Puedo pedir que los borren escribiendo a contacto@skynetgenesis.com.</span></label>' +
+        '<button style="padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Crear mi cuenta gratis</button><div id="gc-err3" role="status" style="font-size:13px"></div><a href="#" id="gc-back2" style="font-size:13px;color:#0B4F8A">← Ya tengo cuenta: ingresar</a>';
+      document.getElementById("gc-back2").onclick = function (e) { e.preventDefault(); location.hash = ""; location.reload(); };
+      f0.onsubmit = function (e) {
+        e.preventDefault(); var m = document.getElementById("gc-err3"), bt = f0.querySelector("button");
+        var d = { empresa: f0.empresa.value, sector: f0.sector.value, ciudad: f0.ciudad.value, nombre: f0.nombre.value, correo: f0.correo.value, celular: f0.celular.value, plan: f0.plan.value, acepto: f0.acepto.checked, web: f0.web.value };
+        if (!d.acepto) { m.style.color = "#B93A27"; m.textContent = "Para crear la cuenta debe aceptar las condiciones y el tratamiento de datos."; return; }
+        m.style.color = "#5D6B78"; m.textContent = "Creando su cuenta…"; bt.disabled = true;
+        post("/api/public/registro", d).then(function (x) {
+          bt.disabled = false;
+          if (!x.ok) { m.style.color = "#B93A27"; m.textContent = x.j.error || "No se pudo crear la cuenta."; return; }
+          f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">¡Listo! Revise su correo</div>' +
+            '<p style="margin:0">Le enviamos a <b>' + String(x.j.correo || d.correo).replace(/[<>&"]/g, "") + '</b> un enlace para crear su contraseña (vale por 24 horas). Si no lo ve, revise la carpeta de correo no deseado.</p>' +
+            (x.j.correoOk === false ? '<p style="margin:0;color:#B93A27">El correo no salió en este momento. Use «¿Olvidó su contraseña?» con su correo en unos minutos, o escríbanos por WhatsApp (304 437 5758).</p>' : '') +
+            '<p style="margin:0;color:#5D6B78;font-size:14px">Su prueba gratis de 15 días ya empezó. Al ingresar, complete la base de conocimiento: con eso SofIA empieza a responderles a sus clientes.</p>' +
+            '<a href="#" id="gc-back3" style="font-size:14px;color:#0B4F8A;font-weight:600">Ir al ingreso</a>';
+          document.getElementById("gc-back3").onclick = function (ev) { ev.preventDefault(); location.hash = ""; location.reload(); };
+        }).catch(function () { bt.disabled = false; m.style.color = "#B93A27"; m.textContent = "No hay conexión con el servidor. Intente de nuevo."; });
+      };
+    }
+    document.getElementById("gc-reg").onclick = function (e) { e.preventDefault(); location.hash = "registro"; registro(); };
+    if (/registro/.test(location.hash)) { registro(); return; }
     var rt = (location.hash.match(/reset=([A-Za-z0-9_-]+)/) || [])[1];
     if (rt) {
       var f0 = document.getElementById("gc-login");
