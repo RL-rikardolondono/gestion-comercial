@@ -61,7 +61,7 @@
       f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">Cree la cuenta de su empresa</div>' +
         '<div style="color:#5D6B78;margin-top:-8px;font-size:14px">15 días de prueba gratis, sin tarjeta. Al terminar, si quiere seguir, paga la mensualidad en línea.</div>' +
         '<label style="font-size:13px;font-weight:600">Nombre de la empresa<input name="empresa" required maxlength="80" autocomplete="organization" style="' + IN + '"></label>' +
-        '<label style="font-size:13px;font-weight:600">Sector<select name="sector" style="' + IN + '">' + sec.map(function (x) { return '<option>' + x + '</option>'; }).join("") + '<option value="">Otro</option></select></label>' +
+        '<label style="font-size:13px;font-weight:600">Sector<select name="sector" style="' + IN + '"><option value="" selected>Seleccione su sector…</option>' + sec.map(function (x) { return '<option>' + x + '</option>'; }).join("") + '<option value="">Otro</option></select></label>' +
         '<label style="font-size:13px;font-weight:600">Ciudad<input name="ciudad" maxlength="60" autocomplete="address-level2" style="' + IN + '"></label>' +
         '<label style="font-size:13px;font-weight:600">Su nombre completo<input name="nombre" required maxlength="80" autocomplete="name" style="' + IN + '"></label>' +
         '<label style="font-size:13px;font-weight:600">Su correo (aquí le llega el enlace para crear la contraseña)<input name="correo" type="email" required maxlength="120" autocomplete="email" style="' + IN + '"></label>' +
@@ -128,6 +128,8 @@
   eyes(document); setTimeout(function () { eyes(document); }, 300);
   document.addEventListener("DOMContentLoaded", function () { eyes(document); });
 
+  // Un enlace para crear la contraseña (o el registro) se atiende aunque el navegador tenga una sesión abierta (por ejemplo la demo)
+  if (token && (/reset=/.test(location.hash) || (/registro/.test(location.hash) && (function () { try { return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).demo; } catch (e) { return true; } })()))) { try { localStorage.removeItem(TOK_KEY); localStorage.removeItem("atd_me"); localStorage.removeItem("atd_tid"); localStorage.removeItem("atd_view"); } catch (e) {} token = null; }
   if (!token) { window.GC_NEEDS_LOGIN = true; document.addEventListener("DOMContentLoaded", loginScreen); return; }
   try { var p = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); window.GC_USER = p; if (p.exp * 1000 < Date.now()) { logout(); return; } } catch (e) { logout(); return; }
 

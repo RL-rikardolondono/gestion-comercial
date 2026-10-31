@@ -3,7 +3,7 @@
 <meta name="gc-api" content="https://api-comercial.skynetgenesis.com">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#F4F8FB}img{max-width:100%}[hidden]{display:none!important}</style>
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icono.svg" type="image/svg+xml"><meta name="theme-color" content="#0B4F8A">
-<script src="shim.js?v=20261031"></script>
+<script src="shim.js?v=20261031b"></script>
 <script>if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});</script>
 </head><body>
 <title>Agente-IA</title>
@@ -676,7 +676,7 @@ function resizeImage(file, M0){
     fr.readAsDataURL(file);
   });
 }
-const logoTag = (cls="logo") => S.logo ? `<img class="${cls}" src="${S.logo}" alt="Logo de ${esc(S.config.company)}">` : "";
+const logoTag = (cls="logo") => S.logo ? `<img class="${cls}" src="${/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(S.logo)?S.logo:""}" alt="Logo de ${esc(S.config.company)}">` : "";
 
 /* ---------- AI ---------- */
 function kbText(){
@@ -903,7 +903,7 @@ function draw(){
   const bar=`<div class="userbar"><div class="row"><span class="avatar sm">${esc((u.name||"?").trim()[0]||"?")}</span><div><b>${esc(u.name)}</b> <span class="chip role-${u.role}">${ROLES[u.role]?.label||u.role}</span></div></div>
     <div class="row">${S.tenants.size&&(!SRV||isProv())?`<label class="row" style="gap:6px"><span class="muted">Empresa</span><select id="tenSel" aria-label="Empresa">${[...S.tenants.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name))).map(t=>`<option value="${t.id}" ${t.id===S.tid?"selected":""}>${esc(t.name)} · ${PLANS[t.plan]?.label||""}</option>`).join("")}</select></label>`:""}
     ${SRV?`${window.GC_USER&&window.GC_USER.demo?'<span class="chip web">Demostración</span>':'<button class="btn sm" data-srv="pass">Cambiar contraseña</button>'}<button class="btn sm" data-srv="logout" style="border-color:#B93A27;color:#B93A27;font-weight:700">Cerrar sesión</button>`:`<label class="row" style="gap:6px"><span class="muted">Usuario</span><select id="meSel" aria-label="Cambiar de usuario">${loginList().map(x=>`<option value="${x.id}" ${x.id===u.id?"selected":""}>${esc(x.name)} · ${ROLES[x.role]?.label||""}</option>`).join("")}</select></label>`}</div></div>
-    ${tenant().status==="suspendido"?'<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está suspendida: el asistente no responde a sus clientes hasta que se reactive.</div>':""}${(()=>{ const ep=estadoPago(tenant()); return (ep.k==="prueba"||ep.pendiente) ? avisoPagoGC(ep) : (ep.k==="cerrada"&&isProv() ? '<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está cerrada por pago: sus usuarios ven la pantalla de cierre hasta que usted actualice "Pagado hasta".</div>' : ""); })()}`;
+    ${tenant().status==="suspendido"?'<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está suspendida: el asistente no responde a sus clientes hasta que se reactive.</div>':""}${(()=>{ const ep=estadoPago(tenant()); return (ep.k==="prueba"||ep.pendiente) ? avisoPagoGC(ep) : (ep.k==="cerrada"&&isProv() ? '<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)">Esta empresa está cerrada por pago: sus usuarios ven la pantalla de cierre hasta que pague en línea con Bold (o usted aplique en Mensualidades un pago aprobado que no llegó).</div>' : ""); })()}`;
   if(estadoPago(tenant()).k==="cerrada" && !isProv()){ $("#nav").innerHTML=""; m.innerHTML = bar + cerradoPagoGC(estadoPago(tenant())); return; }
   m.innerHTML = bar + (locked(S.view) ? lockedView(S.view) : (fns[S.view]||vPanel)()) + lossModal() + (SRV&&S.passOpen?`<div class="sheet"><div class="panel" role="dialog" aria-label="Cambiar contraseña"><h2>Cambiar contraseña</h2><div class="fields"><label class="f">Contraseña actual<input type="password" id="pw-cur" autocomplete="current-password"></label><label class="f">Nueva contraseña (mínimo 8 caracteres)<input type="password" id="pw-new" autocomplete="new-password"></label><div class="row"><button class="btn primary" data-srv="passok">Guardar</button><button class="btn" data-srv="passno">Cancelar</button></div></div></div></div>`:"");
   demoBar();
@@ -1524,7 +1524,7 @@ function vUsers(){
   + `<div class="grid g2" style="align-items:start">
     <div class="panel"><h2>Equipo</h2>${U.length?`<div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Nivel</th>${featOn("sedes")?"<th>Sede</th>":""}<th>Prospectos</th><th>Estado</th><th></th></tr></thead><tbody>${U.map(u=>`<tr><td><b>${esc(u.name)}</b><br><span class="muted">${esc(u.email||"—")}</span></td><td><span class="chip role-${u.role}">${ROLES[u.role]?.label||u.role}</span></td>${featOn("sedes")?`<td>${esc(sedeName(u.sede)||"Todas")}</td>`:""}<td class="mono">${counts(u.id)}</td><td>${u.active===false?'<span class="chip st-perdido">Inactivo</span>':'<span class="chip st-ganado">Activo</span>'}</td><td><button class="btn sm" data-edituser="${u.id}">Editar</button></td></tr>`).join("")}</tbody></table></div>`
       :`<div class="empty"><b>Todavía no hay usuarios</b>Cree el administrador de la empresa con el botón Nuevo usuario.</div>`}
-      <p class="note" style="margin-top:12px">${SRV?"Cada persona ingresa con su correo y su contraseña. Entréguele la contraseña inicial y pídale que la cambie con el botón Cambiar contraseña.":"En esta versión de prueba se cambia de usuario con el selector de arriba para ver qué ve cada nivel. En la versión publicada cada persona entra con su correo y contraseña."}</p></div>
+      <p class="note" style="margin-top:12px">${SRV?"Cada persona ingresa con su correo y su contraseña. Si deja la contraseña vacía, a la persona le llega un enlace por correo para crear la suya; si escribe una, entréguesela y pídale que la cambie con el botón Cambiar contraseña.":"En esta versión de prueba se cambia de usuario con el selector de arriba para ver qué ve cada nivel. En la versión publicada cada persona entra con su correo y contraseña."}</p></div>
     <div class="grid">
       ${e?`<div class="panel"><h2>${e.id?"Editar usuario":"Nuevo usuario"}</h2><div class="fields">
         <label class="f">Nombre completo<input type="text" id="u-name" value="${esc(e.name||"")}"></label>
