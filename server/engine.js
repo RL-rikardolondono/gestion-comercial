@@ -311,7 +311,7 @@ function fireWebhook(ctx, event, l) {
   const ev = c.data.events || "Ambos";
   if (event === "prospecto_nuevo" && ev === "Un prospecto cambia de etapa") return;
   if (event === "cambio_etapa" && ev === "Llega un prospecto nuevo") return;
-  fetch(c.data.outUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ evento: event, empresa: ctx.config.company, prospecto: { id: l.id, nombre: l.name, telefono: l.phone, correo: l.email, canal: l.channel, interes: l.interest, etapa: l.stage, valor: l.value } }) }).catch(() => {});
+  ASESOR.urlSegura(c.data.outUrl).then(() => fetch(c.data.outUrl, { method: "POST", redirect: "manual", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ evento: event, empresa: ctx.config.company, prospecto: { id: l.id, nombre: l.name, telefono: l.phone, correo: l.email, canal: l.channel, interes: l.interest, etapa: l.stage, valor: l.value } }) })).catch(() => {});
 }
 
 /* ---------- tareas programadas ---------- */

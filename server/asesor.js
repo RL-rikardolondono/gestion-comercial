@@ -28,9 +28,21 @@ function origenOk(config, origin) {
 /* ---------- Leer la página de la empresa (con protección: solo direcciones públicas de internet) ---------- */
 // Solo para las pruebas en el computador de desarrollo (nunca en Render): deja leer páginas locales
 const LOCAL_OK = () => process.env.SIMULACION_LOCAL === "1" && process.env.ASESOR_LOCAL === "1" && !process.env.RENDER;
+// Direcciones privadas o internas (también IPv4 escritas dentro de IPv6, como ::ffff:7f00:1)
+const BL = new net.BlockList();
+[["10.0.0.0", 8], ["127.0.0.0", 8], ["0.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.168.0.0", 16], ["100.64.0.0", 10], ["224.0.0.0", 3], ["198.18.0.0", 15]].forEach(([a, n]) => BL.addSubnet(a, n, "ipv4"));
+[["::", 128], ["::1", 128], ["fc00::", 7], ["fe80::", 10]].forEach(([a, n]) => BL.addSubnet(a, n, "ipv6"));
 const privada = (ip) => { if (LOCAL_OK()) return false;
-  if (net.isIPv4(ip)) { const [a, b] = ip.split(".").map(Number); return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224; }
-  const x = ip.toLowerCase(); return x === "::1" || x === "::" || x.startsWith("fc") || x.startsWith("fd") || x.startsWith("fe80") || x.startsWith("::ffff:") && privada(x.slice(7));
+  try {
+    if (net.isIPv4(ip)) return BL.check(ip, "ipv4");
+    if (!net.isIPv6(ip)) return true;
+    const x = ip.toLowerCase();
+    // IPv4 dentro de IPv6 (::ffff:1.2.3.4, ::ffff:102:304, 64:ff9b::/96, 2002::/16): se revisa la IPv4 de adentro
+    const m = x.match(/^(?:::ffff:|::ffff:0:|64:ff9b::)(.+)$/);
+    if (m) { const t = m[1]; if (net.isIPv4(t)) return BL.check(t, "ipv4"); const h = t.split(":"); if (h.length === 2) { const n = (parseInt(h[0], 16) << 16 >>> 0) + parseInt(h[1], 16); return BL.check([n >>> 24, (n >> 16) & 255, (n >> 8) & 255, n & 255].join("."), "ipv4"); } return true; }
+    if (x.startsWith("2002:")) return true;
+    return BL.check(ip, "ipv6");
+  } catch { return true; }
 };
 async function urlSegura(u) {
   let url; try { url = new URL(u); } catch { throw new Error("Dirección no válida"); }

@@ -65,6 +65,8 @@ async function guardedWrite(u, path, data) {
   const prev = await db.getDoc(path);
   // Un soporte solo lo puede modificar la empresa que lo creó
   if (s[0] === "tickets" && !u.staff && prev.exists && prev.data.tid !== u.tid) throw Object.assign(new Error("No permitido"), { status: 403 });
+  // Logo: solo una imagen en datos (png, jpg, webp o gif; sin SVG), para que nadie pueda meter código en la pantalla de otros
+  if (s[0] === "tenants" && s[2] === "config" && s[3] === "logo" && data && data.data && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(String(data.data))) throw Object.assign(new Error("El logo debe ser una imagen PNG, JPG, WEBP o GIF."), { status: 400 });
   // Empresa: solo el proveedor cambia plan, estado y datos de facturación
   // Cobro: «Pagado hasta», la prueba, los pagos y el número de sedes los pone SOLO el servidor (Bold y el conteo real de sedes).
   // Ni la empresa ni el Superadministrador los cambian desde la app: así nadie regala meses ni baja su precio.

@@ -42,7 +42,10 @@ async function cupo(kind, tid) {
   const d = DIA(), L = LIM(), tot = await usados("mail:" + d);
   if (kind === "sistema") return tot < L.total;
   if (tot >= L.total - L.sistema) return false;
-  return !tid || (await usados(`mail:${tid}:${d}`)) < L.empresa;
+  if (!tid) return true;
+  // Empresas en prueba gratis: cupo menor, para que las pruebas no gasten el cupo de las que pagan
+  let lim = L.empresa; try { const t = await kv().getDoc("tenants/" + tid); if (t.exists && require("./cobro").enPrueba(t.data)) lim = Math.min(lim, Number(process.env.BREVO_POR_PRUEBA) || 15); } catch {}
+  return (await usados(`mail:${tid}:${d}`)) < lim;
 }
 async function contar(tid) { const d = DIA(); await kv().pool.query("INSERT INTO kv (k, v) VALUES ($1, '1') ON CONFLICT (k) DO UPDATE SET v = (COALESCE(NULLIF(kv.v, ''), '0')::bigint + 1)::text", ["mail:" + d]); if (tid) await kv().pool.query("INSERT INTO kv (k, v) VALUES ($1, '1') ON CONFLICT (k) DO UPDATE SET v = (COALESCE(NULLIF(kv.v, ''), '0')::bigint + 1)::text", [`mail:${tid}:${d}`]); }
 async function sendEmail(to, subject, text, opts = {}) {

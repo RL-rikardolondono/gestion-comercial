@@ -144,7 +144,7 @@ async function enviarEnlace(u, origin, send, motivo = "olvido") {
   if (esDueno(u)) {
     let emp = "SkyNet Genesis (Superadministrador)";
     if (!u.staff && u.tenant_id) { const t = await db.getDoc("tenants/" + u.tenant_id); emp = t.exists ? t.data.name : u.tenant_id; }
-    await send(DUENO_CORREO, `Agente-IA · enlace de contraseña de ${u.email}`, `Enlace para crear o cambiar la contraseña de Agente-IA.\n\nCuenta: ${u.email}\nEmpresa: ${emp}\nPerfil: ${u.staff ? "Superadministrador" : ({ admin: "Administrador", supervisor: "Supervisor", asesor: "Asesor" })[u.role] || u.role}\n\nAbra este enlace (vale por 1 hora):\n${link}\n\nSi usted no lo pidió, ignore este correo: la contraseña sigue igual.`);
+    await send(DUENO_CORREO, `Agente-IA · enlace de contraseña de ${u.email}`, `Enlace para crear o cambiar la contraseña de Agente-IA.\n\nCuenta: ${u.email}\nEmpresa: ${emp}\nPerfil: ${u.staff ? "Superadministrador" : ({ admin: "Administrador", supervisor: "Supervisor", asesor: "Asesor" })[u.role] || u.role}\n\nAbra este enlace (vale por ${horas === 1 ? "1 hora" : horas + " horas"}):\n${link}\n\nSi usted no lo pidió, ignore este correo: la contraseña sigue igual.`);
     return { dueno: true };
   }
   if (motivo === "registro") {
@@ -171,7 +171,7 @@ async function resetPassword(tok, password) {
   const d = v ? JSON.parse(v) : null;
   if (!d || d.exp < Date.now()) return { error: "El enlace venció o ya se usó. Pida uno nuevo." };
   await upsertUser({ id: d.id, password }); await db.pool.query("UPDATE auth_users SET pass_set=true WHERE id=$1", [d.id]); await db.pool.query("DELETE FROM kv WHERE k=$1", [k]);
-  const r = await db.pool.query("SELECT email FROM auth_users WHERE id=$1", [d.id]); fails.delete(String(r.rows[0]?.email || "").toLowerCase());
+  const r = await db.pool.query("SELECT email FROM auth_users WHERE id=$1", [d.id]); { const em = String(r.rows[0]?.email || "").toLowerCase(); for (const kk of [...fails.keys()]) if (kk === em || kk.startsWith(em + "|")) fails.delete(kk); }
   return { ok: true };
 }
 
