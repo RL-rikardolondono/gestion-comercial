@@ -138,13 +138,18 @@ const esDueno = (row) => !!row && (row.staff || DUENO_CUENTAS().includes(String(
 // Crea el enlace (vale 1 hora) y lo manda: a la persona, o al Gmail del dueño si la cuenta es suya (el correo dice qué cuenta y qué empresa es)
 async function enviarEnlace(u, origin, send, motivo = "olvido") {
   const tok = crypto.randomBytes(24).toString("base64url");
-  await db.kvSet("reset:" + hashTok(tok), JSON.stringify({ id: u.id, exp: Date.now() + 3600e3 }));
+  const horas = motivo === "registro" ? 24 : 1; // el enlace de bienvenida de una empresa nueva vale 24 horas
+  await db.kvSet("reset:" + hashTok(tok), JSON.stringify({ id: u.id, exp: Date.now() + horas * 3600e3 }));
   const link = `${origin}/#reset=${tok}`;
   if (esDueno(u)) {
     let emp = "SkyNet Genesis (Superadministrador)";
     if (!u.staff && u.tenant_id) { const t = await db.getDoc("tenants/" + u.tenant_id); emp = t.exists ? t.data.name : u.tenant_id; }
     await send(DUENO_CORREO, `Agente-IA · enlace de contraseña de ${u.email}`, `Enlace para crear o cambiar la contraseña de Agente-IA.\n\nCuenta: ${u.email}\nEmpresa: ${emp}\nPerfil: ${u.staff ? "Superadministrador" : ({ admin: "Administrador", supervisor: "Supervisor", asesor: "Asesor" })[u.role] || u.role}\n\nAbra este enlace (vale por 1 hora):\n${link}\n\nSi usted no lo pidió, ignore este correo: la contraseña sigue igual.`);
     return { dueno: true };
+  }
+  if (motivo === "registro") {
+    await send(u.email, "Bienvenido a Agente-IA · cree su contraseña", `¡Bienvenido a Agente-IA!\n\nSu empresa ya tiene 15 días de prueba gratis, sin tarjeta.\n\nAbra este enlace (vale por 24 horas) y cree su contraseña:\n${link}\n\nDespués ingrese con este correo (${u.email}) y complete la base de conocimiento de su empresa: con eso SofIA empieza a responderles a sus clientes.\n\nSi usted no creó esta cuenta, ignore este correo.\n\nSoporte: WhatsApp 304 437 5758 · contacto@skynetgenesis.com\nAgente-IA es un producto de SkyNet Genesis.`);
+    return { dueno: false };
   }
   const txt = motivo === "sa"
     ? `SkyNet Genesis le envía un enlace para crear o cambiar su contraseña de Agente-IA.\n\nAbra este enlace (vale por 1 hora) y escriba la nueva contraseña:\n${link}\n\nSi no esperaba este correo, ignórelo.`

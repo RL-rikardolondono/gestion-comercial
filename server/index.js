@@ -36,10 +36,13 @@ app.get("/salud", async (req, res) => {
 });
 // Despertador: un servicio gratuito (cron-job.org) llama esta dirección cada 10 minutos.
 // Mantiene despierto el servidor y revisa si hay seguimientos, cobros o citas por enviar.
+// No necesita clave (no devuelve datos): solo despierta el servidor y, como mucho una vez cada 4 minutos, revisa lo pendiente.
+let cronAt = 0;
 app.get("/api/cron", async (req, res) => {
-  if (!process.env.CRON_SECRET || req.query.key !== process.env.CRON_SECRET) return res.status(403).json({ error: "Clave inválida" });
-  try { const r = await engine.tick(); res.json({ ok: true, ...r, nextDue: r && r.nextDue ? new Date(r.nextDue).toISOString() : null }); }
-  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  if (Date.now() - cronAt < 4 * 60000) return res.json({ ok: true, despierto: true });
+  cronAt = Date.now();
+  try { await engine.tick(); res.json({ ok: true }); }
+  catch (e) { console.error("cron", e.message); res.status(500).json({ ok: false }); }
 });
 
 // Entradas públicas (webhooks, chat web, formulario, API)
@@ -65,6 +68,44 @@ app.post("/api/auth/olvido", async (req, res) => {
 app.post("/api/auth/reset", async (req, res) => {
   const r = await auth.resetPassword(req.body?.token, req.body?.password);
   if (r.error) return res.status(400).json(r); res.json(r);
+});
+// Registro propio de una empresa desde la página de ingreso o la demostración: 15 días de prueba gratis, sin tarjeta.
+// La cuenta queda con una clave al azar y el enlace para crear la contraseña llega al correo (así se comprueba que el correo es suyo).
+const REG_PLANES = ["basico", "pro", "empresarial"];
+const REG_SECTORES = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Comercio / ferretería", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos", ""];
+const regHits = new Map();
+app.post("/api/public/registro", async (req, res) => {
+  const b = req.body || {};
+  if (b.web) return res.json({ ok: true }); // casilla oculta: la llenan solo los robots
+  const now = Date.now(), k = req.ip, h = (regHits.get(k) || []).filter((t) => now - t < 3600e3);
+  if (h.length >= 3) return res.status(429).json({ error: "Ya se crearon varias cuentas desde esta conexión. Intente más tarde o escríbanos por WhatsApp (304 437 5758)." });
+  const txt = (v, n) => String(v || "").replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
+  const empresa = txt(b.empresa, 80), nombre = txt(b.nombre, 80), ciudad = txt(b.ciudad, 60), celular = String(b.celular || "").replace(/[^\d+]/g, "").slice(0, 15);
+  const correo = String(b.correo || "").trim().toLowerCase().slice(0, 120), plan = REG_PLANES.includes(b.plan) ? b.plan : "pro", sector = REG_SECTORES.includes(b.sector) ? b.sector : "";
+  if (empresa.length < 2 || nombre.length < 3) return res.status(400).json({ error: "Escriba el nombre de la empresa y su nombre completo." });
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(correo)) return res.status(400).json({ error: "Escriba un correo válido: allí le llega el enlace para crear la contraseña." });
+  if (celular.replace(/\D/g, "").length < 10) return res.status(400).json({ error: "Escriba un celular válido (10 dígitos)." });
+  if (b.acepto !== true) return res.status(400).json({ error: "Para crear la cuenta debe aceptar las condiciones y el tratamiento de datos." });
+  try {
+    const dia = "regdia:" + cobro.HOY(); const n = Number(await db.kvGet(dia)) || 0;
+    if (n >= 40) return res.status(429).json({ error: "Hoy se alcanzó el máximo de cuentas nuevas. Escríbanos por WhatsApp (304 437 5758) y la creamos de inmediato." });
+    if ((await db.pool.query("SELECT 1 FROM auth_users WHERE lower(email)=$1", [correo])).rows[0]) return res.status(409).json({ error: "Ese correo ya tiene una cuenta de Agente-IA. Ingrese con él o use «¿Olvidó su contraseña?»." });
+    if ((await db.pool.query("SELECT 1 FROM bloqueos WHERE email=$1", [correo])).rows[0]) return res.status(403).json({ error: "Ese correo no puede crear cuentas. Escríbanos por WhatsApp (304 437 5758)." });
+    h.push(now); regHits.set(k, h); if (regHits.size > 5000) regHits.clear(); await db.kvSet(dia, n + 1);
+    const rnd = () => crypto.randomBytes(9).toString("base64url").replace(/[^A-Za-z0-9]/g, "").slice(0, 10);
+    const tid = "t" + rnd(), uid = "u" + rnd();
+    await db.setDoc("tenants/" + tid, { name: empresa, plan, status: "activo", trialUntil: cobro.addD(cobro.HOY(), 14), sector, city: ciudad, razon: empresa, feMail: correo, contacto: { nombre, correo, celular }, origen: "registro", createdAt: now });
+    await db.setDoc(`tenants/${tid}/config/main`, { company: empresa, sector, city: ciudad, tplPending: true });
+    await auth.upsertUser({ id: uid, email: correo, password: crypto.randomBytes(18).toString("base64url"), tid, role: "admin", staff: false, active: true });
+    await db.pool.query("UPDATE auth_users SET pass_set=false WHERE id=$1", [uid]);
+    await db.setDoc(`tenants/${tid}/users/${uid}`, { name: nombre, email: correo, role: "admin", active: true, createdAt: now });
+    const origin = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://comercial.skynetgenesis.com";
+    const row = (await db.pool.query("SELECT id, email, active, tenant_id, role, staff FROM auth_users WHERE id=$1", [uid])).rows[0];
+    let correoOk = true; try { await auth.enviarEnlace(row, origin, (to, sub, t) => ch.sendEmail(to, sub, t, { sistema: true }), "registro"); } catch (e) { correoOk = false; console.error("registro correo", e.message); }
+    ch.sendEmail(auth.DUENO_CORREO, `Agente-IA · nueva empresa en prueba: ${empresa}`, `Se registró una empresa nueva en Agente-IA (15 días de prueba).\n\nEmpresa: ${empresa}\nPlan elegido: ${plan}\nSector: ${sector || "otro"}\nCiudad: ${ciudad || "—"}\nAdministrador: ${nombre}\nCorreo: ${correo}\nCelular: ${celular}\n\nLa ve en Mis clientes.`, { sistema: true }).catch(() => {});
+    await db.setDoc("bitacora/" + now.toString(36) + rnd().slice(0, 4), { at: now, by: "registro", accion: "registro de empresa", tid, empresa, correo, ip: req.ip });
+    res.json({ ok: true, correo, correoOk });
+  } catch (e) { console.error("registro", e.message); res.status(500).json({ error: /duplicate|unique/i.test(e.message) ? "Ese correo ya tiene una cuenta de Agente-IA." : "No se pudo crear la cuenta. Intente de nuevo o escríbanos por WhatsApp (304 437 5758)." }); }
 });
 bold.routes(app); // aviso del sistema central de pagos (sin sesión; se confirma con el verificador)
 app.use("/api", auth.middleware);
