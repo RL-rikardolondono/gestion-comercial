@@ -247,15 +247,16 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
 /* ---------- aviso inmediato al equipo (correo) ---------- */
 // Cada prospecto nuevo, cada formulario y cada vez que un cliente pide un asesor le llega un correo al equipo,
 // como máximo uno por prospecto cada 30 minutos. Va al correo de avisos del formulario, o al del resumen diario, o a los administradores.
+const AVISOS = new Map(); // último aviso por prospecto (en memoria: no llena la base)
 async function avisarEquipo(ctx, l, motivo) {
   if (!l || l.sim || l.demo || isDemoT(ctx) || ctx.config.avisoEquipo === false || !ch.mailOn()) return;
-  const k = "aviso:" + ctx.tid + ":" + l.id; const prev = Number(await db.kvGet(k)) || 0;
+  const k = ctx.tid + ":" + l.id; const prev = AVISOS.get(k) || 0;
   if (motivo !== "asesor" && motivo !== "caso" && Date.now() - prev < 30 * 60000) return;
   const formTo = ((ctx.conns.form || {}).data || {}).notify;
   const tos = [...new Set([formTo, ctx.biz.digest && ctx.biz.digest.to, ...(ctx.users || []).filter((u) => u.role === "admin" && u.active !== false).map((u) => u.email)]
     .flatMap((x) => String(x || "").split(/[,;\s]+/)).filter((x) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(x)))].slice(0, 3);
   if (!tos.length || !(await ch.cupo("aviso", ctx.tid))) return;
-  await db.kvSet(k, Date.now());
+  AVISOS.set(k, Date.now()); if (AVISOS.size > 20000) AVISOS.clear();
   const ult = [...(l.messages || [])].reverse().find((m) => m.from === "cliente");
   const T = { asesor: "Un cliente pide hablar con una persona", caso: "Un cliente reporta un problema", formulario: "Nueva solicitud por formulario", nuevo: "Nuevo interesado" }[motivo] || "Nuevo interesado";
   const canal = { web: "chat de la página", form: "formulario", instagram: "Instagram", facebook: "Facebook", email: "correo", api: "API" }[l.channel] || l.channel || "";
@@ -277,13 +278,13 @@ async function saveMarks(path, arrKey, keyOf, mine) {
 const isDemoT = (ctx) => !!(ctx.tenant && ctx.tenant.demo);
 // Las respuestas de los clientes a los correos van a la empresa (correo de atención o el de su administrador), no a SofIA
 const replyOf = (ctx) => (ctx.conns.email && ctx.conns.email.data && ctx.conns.email.data.address) || (ctx.biz.digest && /@/.test(ctx.biz.digest.to || "") && ctx.biz.digest.to) || ((ctx.users || []).find((u) => u.role === "admin" && u.active !== false && u.email) || {}).email || "";
-async function dispatchLead(tid, path, l) {
+async function dispatchLead(tid, path, l, ctx0) {
   if (!l || l.demo || l.sim || !Array.isArray(l.messages)) return;
   const now = Date.now();
   // Los mensajes de posventa pueden esperar hasta 24 h si se acabó el cupo diario de correo
   const pending = l.messages.filter((m) => OUT.has(m.from) && (!m.d || m.d === "espera: cupo de correo") && now - (m.at || 0) < (m.care || m.d === "espera: cupo de correo" ? 24 * 3600e3 : 15 * 60000));
   if (!pending.length) return;
-  const ctx = await loadTenant(tid);
+  const ctx = ctx0 || (await loadTenant(tid));
   const st = (k) => (ctx.conns[k] || {}).status === "activo";
   for (const m of pending) {
     try {
@@ -383,7 +384,9 @@ async function runCollect(ctx) {
 async function runCare(ctx) {
   if (isDemoT(ctx)) return;
   // Mensajes que esperaban cupo de correo (de cualquier plan): se reintentan en cada ronda (hasta 24 h)
-  for (const l of ctx.leads.values()) if ((l.messages || []).some((m) => m.d === "espera: cupo de correo" && Date.now() - m.at < 24 * 3600e3)) await dispatchLead(ctx.tid, `tenants/${ctx.tid}/leads/${l.id}`, l).catch(() => {});
+  // (solo si ya hay cupo, y máximo 15 por ronda, para no recargar el motor)
+  const esperan = [...ctx.leads.values()].filter((l) => (l.messages || []).some((m) => m.d === "espera: cupo de correo" && Date.now() - m.at < 24 * 3600e3));
+  if (esperan.length && (await ch.cupo("conversacion", ctx.tid))) for (const l of esperan.slice(0, 15)) await dispatchLead(ctx.tid, `tenants/${ctx.tid}/leads/${l.id}`, l, ctx).catch(() => {});
   if (!ctx.feats.includes("care")) return;
   const c = care.careCfg(ctx.config); if (!c.on) return;
   const now = Date.now(), L = local(now);
