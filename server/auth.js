@@ -138,7 +138,7 @@ const esDueno = (row) => !!row && (row.staff || DUENO_CUENTAS().includes(String(
 // Crea el enlace (vale 1 hora) y lo manda: a la persona, o al Gmail del dueño si la cuenta es suya (el correo dice qué cuenta y qué empresa es)
 async function enviarEnlace(u, origin, send, motivo = "olvido") {
   const tok = crypto.randomBytes(24).toString("base64url");
-  const horas = motivo === "registro" ? 24 : 1; // el enlace de bienvenida de una empresa nueva vale 24 horas
+  const horas = motivo === "registro" ? 24 : motivo === "invitacion" ? 48 : 1; // bienvenida 24 h, invitación de un usuario 48 h
   await db.kvSet("reset:" + hashTok(tok), JSON.stringify({ id: u.id, exp: Date.now() + horas * 3600e3 }));
   const link = `${origin}/#reset=${tok}`;
   if (esDueno(u)) {
@@ -146,6 +146,12 @@ async function enviarEnlace(u, origin, send, motivo = "olvido") {
     if (!u.staff && u.tenant_id) { const t = await db.getDoc("tenants/" + u.tenant_id); emp = t.exists ? t.data.name : u.tenant_id; }
     await send(DUENO_CORREO, `Agente-IA · enlace de contraseña de ${u.email}`, `Enlace para crear o cambiar la contraseña de Agente-IA.\n\nCuenta: ${u.email}\nEmpresa: ${emp}\nPerfil: ${u.staff ? "Superadministrador" : ({ admin: "Administrador", supervisor: "Supervisor", asesor: "Asesor" })[u.role] || u.role}\n\nAbra este enlace (vale por ${horas === 1 ? "1 hora" : horas + " horas"}):\n${link}\n\nSi usted no lo pidió, ignore este correo: la contraseña sigue igual.`);
     return { dueno: true };
+  }
+  if (motivo === "invitacion") {
+    let emp = "su empresa"; if (u.tenant_id) { const t = await db.getDoc("tenants/" + u.tenant_id); if (t.exists) emp = t.data.name || emp; }
+    const rol = ({ admin: "Administrador", supervisor: "Supervisor", asesor: "Asesor" })[u.role] || u.role;
+    await send(u.email, `Su acceso a Agente-IA · ${emp}`, `${emp} le dio acceso a Agente-IA como ${rol}.\n\nAbra este enlace (vale por 48 horas) y cree su contraseña:\n${link}\n\nDespués ingrese en ${origin} con este correo (${u.email}).\n\nSi no esperaba este correo, ignórelo.\n\nAgente-IA es un producto de SkyNet Genesis · WhatsApp 304 437 5758`);
+    return { dueno: false };
   }
   if (motivo === "registro") {
     await send(u.email, "Bienvenido a Agente-IA · cree su contraseña", `¡Bienvenido a Agente-IA!\n\nSu empresa ya tiene 15 días de prueba gratis, sin tarjeta.\n\nAbra este enlace (vale por 24 horas) y cree su contraseña:\n${link}\n\nDespués ingrese con este correo (${u.email}) y complete la base de conocimiento de su empresa: con eso SofIA empieza a responderles a sus clientes.\n\nSi usted no creó esta cuenta, ignore este correo.\n\nSoporte: WhatsApp 304 437 5758 · contacto@skynetgenesis.com\nAgente-IA es un producto de SkyNet Genesis.`);

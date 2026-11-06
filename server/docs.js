@@ -75,6 +75,12 @@ async function guardedWrite(u, path, data) {
     if (prev.exists) { for (const k of BILL) { if (k in prev.data) data[k] = prev.data[k]; else delete data[k]; } }
     else { for (const k of BILL) delete data[k]; if (u.staff) data.trialUntil = require("./cobro").addD(require("./cobro").HOY(), 14); }
   }
+  // Bajar de plan: primero hay que dejar los usuarios activos dentro del límite del plan nuevo
+  if (s[0] === "tenants" && s.length === 2 && u.staff && prev.exists && data.plan && data.plan !== prev.data.plan) {
+    const MAXU = { basico: 2, pro: 5, empresarial: 50 }; const lim = MAXU[data.plan] || 5;
+    const act = (await db.listCol(`tenants/${s[1]}/users`)).filter((x) => x.data.active !== false).length;
+    if (act > lim) throw Object.assign(new Error(`Antes de cambiar a ese plan hay que desactivar ${act - lim} usuario(s): el plan permite ${lim} y la empresa tiene ${act} activos.`), { status: 400 });
+  }
   if (s[0] === "tenants" && s.length === 2 && !u.staff) {
     if (!prev.exists) throw Object.assign(new Error("No permitido"), { status: 403 });
     const keep = ["plan", "status", "nit", "razon", "feMail", "name", "createdAt", "demo"];
@@ -139,7 +145,7 @@ async function guardedWrite(u, path, data) {
 }
 
 function router() {
-  const r = express.Router();
+  const r = require("./async").proteger(express.Router());
   r.get("/doc", async (req, res) => {
     const p = String(req.query.path || "");
     if (!db.validPath(p, true)) return res.status(400).json({ error: "Ruta inválida", code: "invalid_argument" });

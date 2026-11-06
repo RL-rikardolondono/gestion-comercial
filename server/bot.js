@@ -34,7 +34,7 @@
   function bestFaq(c, text) {
     const w = new Set(keyWords(text)); let best = null, bs = 0;
     for (const f of c.faqs || []) {
-      if (!f.q || !f.a) continue;
+      if (!f.q || !f.a || /^(indique|liste|escriba aqu[ií])\b/i.test(String(f.a).trim())) continue; // textos de ejemplo sin llenar
       const fw = new Set(keyWords(f.q)); let s = 0; fw.forEach((x) => { if (w.has(x)) s++; });
       const score = fw.size ? s / Math.min(fw.size, Math.max(w.size, 1)) : 0;
       if (s > 0 && (score > bs || (score === bs && best && s > best.s))) { bs = score; best = { f, s, score }; }
@@ -75,7 +75,9 @@
     let intent = null;
     if (num && st.menu && MENU_KEYS[num]) intent = MENU_KEYS[num];
     // 3. Nombre cuando se le pidió
-    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúñ]+( [a-záéíóúñ]+){0,2}$/i.test(String(text).trim()) && !has(nt, [].concat(...Object.values(INTENTS)))) {
+    // Frases como «Quiero inscribirme» o «Necesito información» no son nombres
+    const NO_NOMBRE = /^(quiero|quisiera|necesito|busco|deseo|tengo|me|hola|buenas|buenos|buen|como|cuanto|cuanta|cual|que|donde|cuando|informacion|info|si|no|ok|vale|gracias|por|para|el|la|los|las|un|una|mi|yo|soy|estoy|puedo|pueden|ayuda|precio|precios|valor|horario|cita|inscribirme|matricula)$/;
+    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúñ]+( [a-záéíóúñ]+){0,2}$/i.test(String(text).trim()) && !NO_NOMBRE.test(nt.split(" ")[0]) && !has(nt, [].concat(...Object.values(INTENTS)))) {
       r.name = String(text).trim().replace(/\b\w/g, (x) => x.toUpperCase()); st.askedName = false;
       r.reply = `Mucho gusto, ${r.name.split(" ")[0]}. ${menu}`; st.menu = true; return r;
     }
@@ -113,7 +115,7 @@
       case "precio":
         if (item) r.reply = `${item.n} tiene un valor de ${cop(item.p)}${item.d ? " (" + item.d + ")" : ""}.`;
         else if ((c.catalog || []).filter((x) => x.n).length) r.reply = `Estos son nuestros precios:\n${c.catalog.filter((x) => x.n).slice(0, 8).map((x) => `• ${x.n}: ${cop(x.p)}`).join("\n")}`;
-        else if (c.services) r.reply = String(c.services).slice(0, 700);
+        else if (c.services && String(c.services).split("\n").some((x) => x.trim() && !/(\$|desde)\s*$/i.test(x.trim()))) r.reply = String(c.services).split("\n").filter((x) => !/\$\s*$/.test(x.trim()) && !/\$\s+y\b/.test(x)).join("\n").slice(0, 700); // sin las líneas de ejemplo con precio vacío
         else { r.handoff = true; r.reply = "Un asesor le compartirá los precios en breve."; }
         if (!r.handoff) r.reply += "\n¿Desea agendar una cita? Responda 3.";
         st.menu = true; r.score += 15; r.stage = "interesado"; break;
@@ -144,6 +146,8 @@
         r.reply = `Esa pregunta se la responde mejor un asesor; ya le aviso para que le escriba${c.openNow ? "" : " " + (c.nextOpenText || "apenas abramos")}. Mientras tanto, ${menu.charAt(0).toLowerCase() + menu.slice(1)}`; st.menu = true;
     }
     if (!lead.name && !r.name && !st.askedName && intent !== "human" && !r.book) { r.reply += "\n¿Me regala su nombre, por favor?"; st.askedName = true; }
+    // Ya con el nombre, se pide un correo o celular: así el seguimiento le llega aunque no vuelva a la página
+    else if ((lead.name || r.name) && !lead.phone && !lead.email && !r.phone && !r.email && !st.askedContact && intent !== "human" && !r.book) { r.reply += "\n¿Me deja su correo o su celular para enviarle la información y hacerle seguimiento?"; st.askedContact = true; }
     if (r.name || r.phone || r.email) r.score += 10;
     r.score = Math.max(0, Math.min(100, r.score));
     return r;

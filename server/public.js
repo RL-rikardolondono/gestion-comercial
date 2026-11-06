@@ -39,7 +39,7 @@ function limit(max) {
 }
 
 function router() {
-  const r = express.Router();
+  const r = require("./async").proteger(express.Router());
 
   /* ---------- Meta: verificación y eventos ---------- */
   r.get("/webhooks/meta", (req, res) => {
@@ -172,6 +172,7 @@ fetch(B+"/api/public/"+T+"/info").then(function(r){return r.json()}).then(functi
 function poll(){fetch(B+"/api/public/"+T+"/chat?sid="+sid+"&after="+last).then(function(r){return r.json()}).then(function(j){(j.messages||[]).forEach(add)}).catch(function(){})}
 b.onclick=function(){open=!open;p.style.display=open?"flex":"none";if(open){poll();I.focus()}};setInterval(function(){if(open)poll()},5000);
 F.onsubmit=function(e){e.preventDefault();var t=I.value.trim();if(!t)return;I.value="";add({from:"cliente",text:t,at:last});var w=document.createElement("div");w.className="gcw-x gcw-e";w.textContent="Escribiendo…";M.appendChild(w);
-fetch(B+"/api/public/"+T+"/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,text:t})}).then(function(r){return r.json()}).then(function(j){w.remove();(j.messages||[]).filter(function(m){return m.from!=="cliente"&&m.at>last}).forEach(add);(j.messages||[]).forEach(function(m){if(m.at>last)last=m.at})}).catch(function(){w.textContent="No se pudo enviar. Intente de nuevo."})}})();`;
+var ac=window.AbortController?new AbortController():null,to=setTimeout(function(){if(ac)ac.abort()},25000);
+fetch(B+"/api/public/"+T+"/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sid:sid,text:t}),signal:ac?ac.signal:undefined}).then(function(r){return r.json()}).then(function(j){clearTimeout(to);if(j.error){w.textContent=/no est. activo/.test(j.error)?"En este momento el chat no está disponible. Intente más tarde, por favor.":j.error;return}w.remove();(j.messages||[]).filter(function(m){return m.from!=="cliente"&&m.at>last}).forEach(add);(j.messages||[]).forEach(function(m){if(m.at>last)last=m.at})}).catch(function(){clearTimeout(to);w.textContent="No se pudo enviar. Intente de nuevo."})}})();`;
 
 module.exports = { router };

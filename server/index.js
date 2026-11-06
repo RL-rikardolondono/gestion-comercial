@@ -15,7 +15,7 @@ const bold = require("./bold");
 // En Render las claves se generan solas; sin ellas el servidor no arranca (no se usan claves por defecto)
 if (process.env.RENDER && (!process.env.JWT_SECRET || !process.env.SECRET_KEY)) { console.error("Faltan JWT_SECRET o SECRET_KEY"); process.exit(1); }
 process.on("unhandledRejection", (e) => console.error("promesa sin manejar", e && e.message));
-const app = express();
+const app = require("./async").proteger(express());
 app.disable("x-powered-by");
 app.set("trust proxy", 1); // Render pone un proxy delante: la IP real es la última que agrega ese proxy
 app.use(express.json({ limit: "1mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
@@ -94,15 +94,15 @@ app.post("/api/public/registro", async (req, res) => {
     if (n >= 100) { if (n === 100) { await db.kvSet(dia, n + 1); ch.sendEmail(auth.DUENO_CORREO, "Agente-IA · se llenó el cupo diario de registros", "Hoy se crearon 100 cuentas nuevas en Agente-IA y el registro quedó cerrado hasta mañana. Revise Mis clientes por si hay registros falsos.", { sistema: true }).catch(() => {}); } return res.status(429).json({ error: "Hoy se alcanzó el máximo de cuentas nuevas. Escríbanos por WhatsApp (304 437 5758) y la creamos de inmediato." }); }
     if ((await db.pool.query("SELECT 1 FROM auth_users WHERE lower(email)=$1", [correo])).rows[0]) return res.status(409).json({ error: "Ese correo ya tiene una cuenta de Agente-IA. Ingrese con él o use «¿Olvidó su contraseña?»." });
     if ((await db.pool.query("SELECT 1 FROM bloqueos WHERE email=$1", [correo])).rows[0]) return res.status(403).json({ error: "Ese correo no puede crear cuentas. Escríbanos por WhatsApp (304 437 5758)." });
-    // La prueba gratis es una sola por empresa: el mismo celular o el mismo nombre de empresa no vuelven a tener prueba
+    // La prueba gratis es una sola por empresa: el mismo celular, o el mismo nombre de empresa en la misma ciudad, no vuelven a tener prueba
     const cel10 = celular.replace(/\D/g, "").slice(-10), nomK = empresa.toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "");
-    const ya = (await db.listCol("tenants")).some((t) => (t.data.contacto && String(t.data.contacto.celular || "").replace(/\D/g, "").slice(-10) === cel10) || String(t.data.name || "").toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "") === nomK);
+    const ya = (await db.listCol("tenants")).some((t) => (t.data.contacto && String(t.data.contacto.celular || "").replace(/\D/g, "").slice(-10) === cel10) || (String(t.data.name || "").toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "") === nomK && String(t.data.city || "").toLowerCase().normalize("NFD").replace(/[^a-z]/g, "") === ciudad.toLowerCase().normalize("NFD").replace(/[^a-z]/g, "")));
     if (ya) return res.status(409).json({ error: "Esta empresa (o este celular) ya tuvo su prueba gratis. Para seguir usando Agente-IA escríbanos por WhatsApp (304 437 5758) y le ayudamos." });
     await db.kvSet(dia, n + 1);
     const rnd = () => crypto.randomBytes(9).toString("base64url").replace(/[^A-Za-z0-9]/g, "").slice(0, 10);
     const tid = "t" + rnd(), uid = "u" + rnd();
     await db.setDoc("tenants/" + tid, { name: empresa, plan, status: "activo", trialUntil: cobro.addD(cobro.HOY(), 14), sector, city: ciudad, razon: empresa, feMail: correo, contacto: { nombre, correo, celular }, origen: "registro", createdAt: now });
-    await db.setDoc(`tenants/${tid}/config/main`, { company: empresa, sector, city: ciudad, tplPending: true });
+    await db.setDoc(`tenants/${tid}/config/main`, { company: empresa, sector, city: ciudad, tplPending: true, biz: { digest: { on: true, to: correo } } });
     await auth.upsertUser({ id: uid, email: correo, password: crypto.randomBytes(18).toString("base64url"), tid, role: "admin", staff: false, active: true });
     await db.pool.query("UPDATE auth_users SET pass_set=false WHERE id=$1", [uid]);
     await db.setDoc(`tenants/${tid}/users/${uid}`, { name: nombre, email: correo, role: "admin", active: true, createdAt: now });
@@ -177,7 +177,7 @@ app.post("/api/auth/users", async (req, res) => {
       await db.pool.query("UPDATE auth_users SET pass_set=false WHERE id=$1", [b.id]);
       const row = (await db.pool.query("SELECT id, email, active, tenant_id, role, staff FROM auth_users WHERE id=$1", [b.id])).rows[0];
       const origin = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://comercial.skynetgenesis.com";
-      try { const x = await auth.enviarEnlace(row, origin, (to, sub, txt) => ch.sendEmail(to, sub, txt, { sistema: true }), "sa"); enlace = x.dueno ? "rikardolondono@gmail.com" : row.email; } catch (e) { enlace = "error: " + e.message; }
+      try { const x = await auth.enviarEnlace(row, origin, (to, sub, txt) => ch.sendEmail(to, sub, txt, { sistema: true }), "invitacion"); enlace = x.dueno ? "rikardolondono@gmail.com" : row.email; } catch (e) { enlace = "error: " + e.message; }
     }
     const doc = { name: b.name, email: b.email || "", role: b.role, active: b.active !== false, createdAt: b.createdAt || Date.now(), ...(b.sede !== undefined ? { sede: b.sede } : {}), ...(b.goal !== undefined ? { goal: b.goal } : {}) };
     await docs.guardedWrite({ ...u, tid, staff: true }, `tenants/${tid}/users/${b.id}`, doc);
@@ -339,7 +339,7 @@ const runAt = new Map();
 app.post("/api/engine/run", async (req, res) => {
   const tid = req.user.staff ? req.body?.tid : req.user.tid;
   if (!req.user.staff && (req.user.demo || !["admin", "supervisor"].includes(req.user.role))) return res.status(403).json({ error: "Solo el administrador o el supervisor." });
-  if (Date.now() - (runAt.get(tid) || 0) < 60000) return res.json({ ok: true, espera: true });
+  if (!(process.env.SIMULACION_LOCAL === "1" && !process.env.RENDER) && Date.now() - (runAt.get(tid) || 0) < 60000) return res.json({ ok: true, espera: true });
   runAt.set(tid, Date.now()); if (runAt.size > 5000) runAt.clear();
   await engine.tick(tid, true); res.json({ ok: true });
 });

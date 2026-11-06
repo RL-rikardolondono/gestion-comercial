@@ -45,7 +45,7 @@ const isHoliday = (ts) => { const l = local(ts); return holidays(l.y).has(`${l.y
 function collectAllowedAt(ts) { const l = local(ts), h = l.h + l.mi / 60; if (l.wd === 0 || isHoliday(ts)) return false; if (l.wd === 6) return h >= 8 && h < 15; return h >= 7 && h < 19; }
 
 /* ---------- contexto de una empresa ---------- */
-const BIZ_DEFAULT = { hours: { 1: [["08:00", "18:00"]], 2: [["08:00", "18:00"]], 3: [["08:00", "18:00"]], 4: [["08:00", "18:00"]], 5: [["08:00", "18:00"]], 6: [["08:00", "13:00"]], 0: [] }, slotMin: 30, remindHours: 24, agendaOn: true, services: [], catalog: [], assign: "off", rr: 0, slaMin: 15, privacy: { on: true, text: "Al escribirnos usted autoriza el tratamiento de sus datos personales para atender su solicitud, según la Ley 1581 de 2012. Si no desea recibir más mensajes, escriba BAJA.", url: "" }, survey: { on: true, text: "Gracias por elegirnos. ¿Cómo calificaría nuestra atención de 1 a 5?" }, digest: { on: false, to: "" } };
+const BIZ_DEFAULT = { hours: { 1: [["08:00", "18:00"]], 2: [["08:00", "18:00"]], 3: [["08:00", "18:00"]], 4: [["08:00", "18:00"]], 5: [["08:00", "18:00"]], 6: [["08:00", "13:00"]], 0: [] }, slotMin: 30, remindHours: 24, agendaOn: true, services: [], catalog: [], assign: "off", rr: 0, slaMin: 15, privacy: { on: true, text: "Al escribirnos usted autoriza el tratamiento de sus datos personales para atender su solicitud, según la Ley 1581 de 2012. Si no desea recibir más mensajes, escriba BAJA.", url: "" }, survey: { on: true, text: "Gracias por elegirnos. ¿Cómo calificaría nuestra atención de 1 a 5?" }, digest: { on: true, to: "" } };
 const COLLECT_DEFAULT = { enabled: false, thanks: true, payInfo: "", steps: [{ offset: -3, text: "Hola {nombre}, le recordamos que su pago de {saldo} por {concepto} vence el {vence}. {pago}" }, { offset: 0, text: "Hola {nombre}, hoy vence su pago de {saldo} por {concepto}. {pago}" }, { offset: 3, text: "{nombre}, su pago de {saldo} por {concepto} tiene 3 días de retraso. Si ya pagó, envíenos el comprobante." }, { offset: 10, text: "{nombre}, su cuenta {numero} por {saldo} sigue pendiente. Responda este mensaje para acordar el pago." }] };
 
 async function loadTenant(tid) {
@@ -181,6 +181,7 @@ async function botAnswer(ctx, l) {
   if (b.privacy.on && !l.consentAsked) { reply = b.privacy.text + (b.privacy.url ? " Política: " + b.privacy.url : "") + "\n\n" + reply; l.consentAsked = t; l.consent = l.consent || "pendiente"; }
   if (r.botState !== undefined) l.bot = r.botState;
   if (!isOpen(ctx, t) && r.handoff && r.ai) { const no = nextOpen(ctx, t); if (no) reply += `\n\nEn este momento estamos fuera del horario de atención. Un asesor le escribirá ${fdt(no)}.`; }
+  reply = reply.replace(/([ap])\. m\.\./g, "$1. m."); // «8:00 a. m..» → «8:00 a. m.»
   l.messages.push({ from: "bot", text: reply, at: t, ...(r.unknown ? { unknown: String(r.unknown).slice(0, 200) } : {}) });
   if (r.name && !l.name) l.name = String(r.name).slice(0, 80);
   if (r.phone && !l.phone) l.phone = String(r.phone).slice(0, 40);
@@ -202,23 +203,28 @@ async function botAnswer(ctx, l) {
 function setStage(l, st) { if (l.stage === st) return; l.stageLog = [...(l.stageLog || [{ stage: l.stage || "nuevo", at: l.createdAt || Date.now() }]), { stage: st, at: Date.now() }].slice(-30); l.stage = st; }
 
 /* ---------- mensaje entrante de un cliente (cualquier canal) ---------- */
-const OPTOUT_RE = /\b(baja|stop|no (me )?(escriban|envien|manden) mas|no quiero (recibir )?mas mensajes|cancelar suscripcion)\b/;
+// «BAJA» o «STOP» solo cuentan si son TODO el mensaje (para no confundir «¿el precio baja?» o «tengo la presión baja»);
+// las frases explícitas («no me escriban más», «no quiero recibir más mensajes») cuentan en cualquier parte del mensaje
+const OPTOUT_RE = /^(baja|stop|darme de baja|dar de baja|quiero darme de baja)$|\b(no (me )?(escriban|envien|manden|contacten) mas|no quiero (recibir )?mas mensajes|cancelar (la )?suscripcion)\b/;
 const YES_RE = /^(si|sí|acepto|autorizo|de acuerdo|ok|listo|claro)\b/;
 async function handleInbound(tid, { channel, key, phone, name, email, text, extId, sede }) {
   if (extId) { if (await db.kvGet("in:" + extId)) return null; await db.kvSet("in:" + extId, Date.now()); }
   const ctx = await loadTenant(tid);
-  const t = Date.now(), nt = norm(text).trim();
+  const t = Date.now(), nt = norm(text).trim(), ntw = nt.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
   let l = [...ctx.leads.values()].find((x) => (key && x.extKey === key) || (phone && ch.digits(x.phone).slice(-10) === ch.digits(phone).slice(-10) && ch.digits(phone).length >= 7));
   if (!l) { const ar = await mant.findArchived(tid, key, phone).catch(() => null); if (ar) { l = { ...ar, messages: ar.messages || [], restoredAt: t }; ctx.leads.set(l.id, l); } }
+  let nuevo = false;
   if (!l) {
+    nuevo = true;
     l = { id: uid("l"), name: name || "", phone: phone || "", email: email || "", channel, extKey: key || "", interest: "", stage: "nuevo", score: 20, value: 0, notes: "", sede: sede || "", createdAt: t, updatedAt: t, lastInboundAt: 0, lastOutboundAt: 0, awaiting: "", followStep: 0, followPaused: false, handoff: false, messages: [], stageLog: [{ stage: "nuevo", at: t }] };
     await autoAssign(ctx, l); fireWebhook(ctx, "prospecto_nuevo", l);
   }
+  const yaHandoff = !!l.handoff;
   if (!l.extKey && key) l.extKey = key;
   if (name && !l.name) l.name = name;
   l.messages.push({ from: "cliente", text, at: t, ...(extId ? { ext: extId } : {}) });
   l.lastInboundAt = t;
-  if (OPTOUT_RE.test(nt)) { l.optOut = t; l.followPaused = true; l.messages.push({ from: "auto", text: `Entendido. No le enviaremos más mensajes de ${ctx.config.company}. Si necesita algo, escríbanos.`, at: t + 1 }); l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
+  if (OPTOUT_RE.test(ntw)) { l.optOut = t; l.followPaused = true; l.messages.push({ from: "auto", text: `Entendido. No le enviaremos más mensajes de ${ctx.config.company}. Si necesita algo, escríbanos.`, at: t + 1 }); l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
   if (care.surveyPending(l, t) && /^[1-5]$/.test(nt)) { l.csat = Number(nt); l.csatAt = t; l.csatLog = [...(l.csatLog || []), { v: Number(nt), at: t }].slice(-12); l.awaitSurvey = false; l.messages.push({ from: "auto", text: Number(nt) >= 4 ? "¡Muchas gracias por su calificación!" : "Gracias por su sinceridad. Un responsable revisará su caso.", at: t + 1 }); if (Number(nt) <= 3) { l.handoff = true; l.awaiting = "empresa"; } else l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
   if (ctx.biz.privacy.on && l.consent !== "aceptado" && l.consentAsked && YES_RE.test(nt)) { l.consent = "aceptado"; l.consentAt = t; }
   // Cliente activo con un problema: se abre un caso de soporte y lo atiende una persona
@@ -226,13 +232,36 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
     const open = (l.cases || []).find((x) => x.status === "abierto");
     if (!open) { l.cases = [...(l.cases || []), { id: "cs" + t.toString(36), at: t, text: String(text).slice(0, 300), status: "abierto" }].slice(-20);
       l.messages.push({ from: "auto", text: care.fill(care.careCfg(ctx.config).caseText, l, ctx.config.company), at: t + 1, caso: true }); l.lastOutboundAt = t + 1; }
-    l.handoff = true; l.awaiting = "empresa"; await saveLead(ctx, l); return ctx.leads.get(l.id);
+    l.handoff = true; l.awaiting = "empresa"; await saveLead(ctx, l); if (!yaHandoff) avisarEquipo(ctx, ctx.leads.get(l.id) || l, "caso").catch(() => {}); return ctx.leads.get(l.id);
   }
   l.awaiting = "empresa"; l.followStep = 0; if (l.stage === "perdido") setStage(l, "contactado");
   await saveLead(ctx, l);
-  const canBot = ctx.config.autoReply !== false && !l.followPaused && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !(l.handoff && l.owner);
+  // Si el cliente se dio de baja y vuelve a escribir, SofIA le responde (él inició la conversación); los seguimientos automáticos siguen apagados
+  const canBot = ctx.config.autoReply !== false && (!l.followPaused || l.optOut) && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !(l.handoff && l.owner);
   if (canBot) await botAnswer(ctx, l);
-  return ctx.leads.get(l.id);
+  const fin = ctx.leads.get(l.id) || l;
+  if (nuevo || (!yaHandoff && fin.handoff)) avisarEquipo(ctx, fin, !yaHandoff && fin.handoff ? "asesor" : channel === "form" ? "formulario" : "nuevo").catch(() => {});
+  return fin;
+}
+
+/* ---------- aviso inmediato al equipo (correo) ---------- */
+// Cada prospecto nuevo, cada formulario y cada vez que un cliente pide un asesor le llega un correo al equipo,
+// como máximo uno por prospecto cada 30 minutos. Va al correo de avisos del formulario, o al del resumen diario, o a los administradores.
+async function avisarEquipo(ctx, l, motivo) {
+  if (!l || l.sim || l.demo || isDemoT(ctx) || ctx.config.avisoEquipo === false || !ch.mailOn()) return;
+  const k = "aviso:" + ctx.tid + ":" + l.id; const prev = Number(await db.kvGet(k)) || 0;
+  if (motivo !== "asesor" && motivo !== "caso" && Date.now() - prev < 30 * 60000) return;
+  const formTo = ((ctx.conns.form || {}).data || {}).notify;
+  const tos = [...new Set([formTo, ctx.biz.digest && ctx.biz.digest.to, ...(ctx.users || []).filter((u) => u.role === "admin" && u.active !== false).map((u) => u.email)]
+    .flatMap((x) => String(x || "").split(/[,;\s]+/)).filter((x) => /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(x)))].slice(0, 3);
+  if (!tos.length || !(await ch.cupo("aviso", ctx.tid))) return;
+  await db.kvSet(k, Date.now());
+  const ult = [...(l.messages || [])].reverse().find((m) => m.from === "cliente");
+  const T = { asesor: "Un cliente pide hablar con una persona", caso: "Un cliente reporta un problema", formulario: "Nueva solicitud por formulario", nuevo: "Nuevo interesado" }[motivo] || "Nuevo interesado";
+  const canal = { web: "chat de la página", form: "formulario", instagram: "Instagram", facebook: "Facebook", email: "correo", api: "API" }[l.channel] || l.channel || "";
+  const app = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://agente-ia.skynetgenesis.com";
+  const txt = `${T} en ${ctx.config.company || "su empresa"}.\n\nNombre: ${l.name || "(sin nombre)"}\nCelular: ${l.phone || "—"}\nCorreo: ${l.email || "—"}\nCanal: ${canal}${l.interest ? "\nLe interesa: " + l.interest : ""}${ult ? "\nÚltimo mensaje: «" + String(ult.text).slice(0, 300) + "»" : ""}\n\nRespóndale desde la Bandeja de Agente-IA: ${app}\n\n(Puede apagar estos avisos en Ajustes comerciales.)`;
+  for (const to of tos) { try { await ch.sendEmail(to, `${T} · ${ctx.config.company || "Agente-IA"}`, txt, { tid: ctx.tid }); } catch (e) { console.error("aviso equipo", e.message); } }
 }
 
 /* ---------- envío real de lo que la app escribe (bandeja de salida) ---------- */
@@ -252,7 +281,7 @@ async function dispatchLead(tid, path, l) {
   if (!l || l.demo || l.sim || !Array.isArray(l.messages)) return;
   const now = Date.now();
   // Los mensajes de posventa pueden esperar hasta 24 h si se acabó el cupo diario de correo
-  const pending = l.messages.filter((m) => OUT.has(m.from) && (!m.d || m.d === "espera: cupo de correo") && now - (m.at || 0) < (m.care ? 24 * 3600e3 : 15 * 60000));
+  const pending = l.messages.filter((m) => OUT.has(m.from) && (!m.d || m.d === "espera: cupo de correo") && now - (m.at || 0) < (m.care || m.d === "espera: cupo de correo" ? 24 * 3600e3 : 15 * 60000));
   if (!pending.length) return;
   const ctx = await loadTenant(tid);
   const st = (k) => (ctx.conns[k] || {}).status === "activo";
@@ -268,9 +297,10 @@ async function dispatchLead(tid, path, l) {
       if (m.care && mailOk && (!["instagram", "facebook"].includes(l.channel) || late)) {
         if (!(await ch.cupo("posventa", tid))) { m.d = "espera: cupo de correo"; continue; }
         await ch.sendEmail(l.email, `Un saludo de ${ctx.config.company}`, m.text + "\n\nSi no desea recibir más mensajes, responda este correo con la palabra BAJA.", { replyTo: replyOf(ctx), tid }); m.d = "ok: correo"; }
-      else if (l.channel === "web") m.d = "web";
+      // Chat de la página: si el cliente ya se fue (más de 30 min sin escribir) y dejó correo, el seguimiento le llega por correo
+      else if (l.channel === "web" && !(mailOk && m.from === "auto" && Date.now() - (l.lastInboundAt || 0) > 30 * 60000)) m.d = "web";
       else if (l.channel === "instagram" || l.channel === "facebook") { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; }
-      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) throw new Error("se acabó el cupo diario de correo"); await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: replyOf(ctx), tid }); m.d = "ok"; }
+      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: replyOf(ctx), tid }); m.d = "ok"; }
       else m.d = "sin canal activo";
     } catch (e) { m.d = "error: " + String(e.message).slice(0, 120); }
     m.dAt = Date.now();
@@ -351,9 +381,10 @@ async function runCollect(ctx) {
   }
 }
 async function runCare(ctx) {
-  if (!ctx.feats.includes("care") || isDemoT(ctx)) return;
-  // Saludos que esperaban cupo de correo: se reintentan en cada ronda (hasta 24 h)
-  for (const l of ctx.leads.values()) if ((l.messages || []).some((m) => m.care && m.d === "espera: cupo de correo" && Date.now() - m.at < 24 * 3600e3)) await dispatchLead(ctx.tid, `tenants/${ctx.tid}/leads/${l.id}`, l).catch(() => {});
+  if (isDemoT(ctx)) return;
+  // Mensajes que esperaban cupo de correo (de cualquier plan): se reintentan en cada ronda (hasta 24 h)
+  for (const l of ctx.leads.values()) if ((l.messages || []).some((m) => m.d === "espera: cupo de correo" && Date.now() - m.at < 24 * 3600e3)) await dispatchLead(ctx.tid, `tenants/${ctx.tid}/leads/${l.id}`, l).catch(() => {});
+  if (!ctx.feats.includes("care")) return;
   const c = care.careCfg(ctx.config); if (!c.on) return;
   const now = Date.now(), L = local(now);
   // Ley 2300: lunes a viernes de 7 a 19, sábados de 8 a 15; nunca domingos ni festivos. Dentro de eso, el horario que elija la empresa.
@@ -399,7 +430,9 @@ async function runAppts(ctx) {
   }
 }
 async function runDigest(ctx) {
-  const d = ctx.biz.digest; if (!d.on || !d.to) return;
+  // Sin correo escrito, el resumen va al administrador de la empresa (así le llega desde el primer día)
+  const d0 = ctx.biz.digest; const admin = ((ctx.users || []).find((u) => u.role === "admin" && u.active !== false && /@/.test(u.email || "")) || {}).email || "";
+  const d = { ...d0, to: /@/.test(d0.to || "") ? d0.to : admin }; if (!d.on || !d.to) return;
   const l = local(Date.now()); const at19 = Date.UTC(l.y, l.m, l.d, 19 - TZ, 0);
   if (l.h < 19) { due(at19); return; } due(at19 + DAY);
   const k = `digest:${ctx.tid}:${dayKey(Date.now())}`; if (await db.kvGet(k)) return; await db.kvSet(k, Date.now());
