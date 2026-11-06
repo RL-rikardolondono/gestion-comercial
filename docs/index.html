@@ -1196,10 +1196,16 @@ function vSim(){
     </div></div>`;
 }
 
+// Aviso de textos de ejemplo sin llenar (SofIA no los usa, pero el cliente se queda sin respuesta)
+function kbPendientes(){ const c=S.config; const faqs=(c.faqs||[]).filter(f=>/^(indique|liste|escriba aqu[ií])\b/i.test(String(f.a||"").trim())).map(f=>f.q);
+  const precios=String(c.services||"").split("\n").filter(x=>/\$\s*$/.test(x.trim())).length;
+  if(!faqs.length && !precios) return "";
+  return `<div class="note" style="margin-bottom:14px;background:#FFF6E5;border-color:#F0C36D"><b>Complete estos datos para que ${esc(c.assistant||"SofIA")} pueda responder:</b><ul style="margin:6px 0 0 18px">${precios?`<li>${precios} precio(s) sin valor en «Servicios y precios» (las líneas que terminan en $).</li>`:""}${faqs.map(q=>`<li>Respuesta de ejemplo sin llenar: «${esc(q)}»</li>`).join("")}</ul><span class="muted">Mientras estén así, ${esc(c.assistant||"SofIA")} no las usa y le pasa la pregunta a un asesor.</span></div>`; }
 function vKB(){
   const c=S.config;
   return head("Base de conocimiento","Lo que el asistente sabe de la empresa. Mientras más completa, mejores respuestas da. Cada cliente que compre el sistema tiene la suya.",
     `<button class="btn primary" data-act="savekb">Guardar cambios</button>`)
+  + kbPendientes()
   + `<div class="grid g2" style="align-items:start">
     <div class="panel"><h2>Datos de la empresa</h2><div class="fields">
       <div class="f" style="font-size:12.5px;font-weight:600;color:var(--ink-2)">Logo de la empresa
@@ -2481,7 +2487,8 @@ function vSettings(){
       <label class="f">Motivos de pérdida (separados por coma)<input type="text" id="loss-list" value="${esc(b.lossReasons.join(", "))}"></label></div></div>
     <div class="panel"><h2>Resumen diario para el propietario</h2><div class="fields">
       <label class="toggle"><input type="checkbox" id="dg-on" ${b.digest.on?"checked":""}> Enviar cada día a las 7:00 p. m.</label>
-      <label class="f">Correo del propietario<input type="email" id="dg-to" value="${esc(b.digest.to)}"></label>
+      <label class="f">Correo del propietario (vacío: el del administrador)<input type="email" id="dg-to" value="${esc(b.digest.to)}"></label>
+      <label class="toggle"><input type="checkbox" id="av-on" ${S.config.avisoEquipo!==false?"checked":""}> Avisar por correo al instante cada interesado nuevo y cada cliente que pida un asesor</label>
       <div class="code" style="white-space:pre-wrap">${esc(digestText())}</div>
       <div class="row"><button class="btn sm" data-pact="copydigest">Copiar resumen de hoy</button></div></div></div>
   </div></div>`;
@@ -2609,7 +2616,7 @@ document.addEventListener("click", async e=>{
         assign:$("#as-mode").value, slaMin:Math.max(1,Number($("#as-sla").value)||15), goals:{value:Number($("#g-val").value)||0, count:Number($("#g-cnt").value)||0}, ads,
         catalog:readCatalog(), payLink:$("#pay-link").value.trim(), quick:readQuick().filter(q=>q.t.trim()||q.x.trim()),
         privacy:{on:$("#pv-on").checked, text:$("#pv-text").value, url:$("#pv-url").value.trim()}, survey:{on:$("#sv-on").checked, text:$("#sv-text").value},
-        lossReasons:$("#loss-list").value.split(",").map(x=>x.trim()).filter(Boolean), digest:{on:$("#dg-on").checked, to:$("#dg-to").value.trim()}});
+        lossReasons:$("#loss-list").value.split(",").map(x=>x.trim()).filter(Boolean), digest:{on:$("#dg-on").checked, to:$("#dg-to").value.trim()}}); writeConfig({avisoEquipo:$("#av-on").checked});
       logAudit("Ajustes comerciales guardados",""); toast("Ajustes guardados"); break; }
     case "addcat": S.fresh=true; saveBiz({catalog:[...readCatalog(), {n:"",p:0,d:""}]}); break;
     case "delcat": S.fresh=true; { const c=readCatalog(); c.splice(Number(arg),1); saveBiz({catalog:c}); } break;
@@ -2710,10 +2717,12 @@ document.addEventListener("click", async e=>{
       switchTenant(tid); go("conocimiento"); toast(`Empresa creada en prueba. Complete su base de conocimiento.`); break; }
     case "connsave": { if(!can("config")||!S.wizard) return; const c=CONNECTORS.find(x=>x.id===S.wizard); const data={}; c.fields.forEach(f=>{ const el=$("#cw-"+f.k); if(el) data[f.k]=el.value.trim(); });
       const prev=connOf(c.id); const first=prev.status==="none"||prev.status==="pausado";
-      const next={...S.conns, [c.id]:{...prev, data, status:prev.status==="activo"?"activo":"pendiente", requestedAt:first?Date.now():(prev.requestedAt||Date.now()), by:me().id}};
+      // El chat web y el formulario se activan solos al guardar (no necesitan llaves de terceros); Instagram/Facebook los activa SkyNet Genesis
+      const auto=(c.id==="web"||c.id==="form");
+      const next={...S.conns, [c.id]:{...prev, data, status:(prev.status==="activo"||auto)?"activo":"pendiente", requestedAt:first?Date.now():(prev.requestedAt||Date.now()), by:me().id, ...(auto&&prev.status!=="activo"?{activatedAt:Date.now()}:{})}};
       await writeConns(next);
-      if(first && !isProv()) await newTicket("Activación", `Activar ${c.title}`, c.fields.map(f=>`${f.l}: ${data[f.k]||"—"}`).join("\n"));
-      toast(first?"Datos guardados. Se envió la solicitud de activación.":"Cambios guardados"); break; }
+      if(first && !auto && !isProv()) await newTicket("Activación", `Activar ${c.title}`, c.fields.map(f=>`${f.l}: ${data[f.k]||"—"}`).join("\n"));
+      toast(auto?(first?"Listo: ya está activo. Copie el código y péguelo en su página.":"Cambios guardados"):(first?"Datos guardados. Se envió la solicitud de activación.":"Cambios guardados")); break; }
     case "connactivate": { if(!isProv()||!S.wizard) return; const prev=connOf(S.wizard); await writeConns({...S.conns, [S.wizard]:{...prev, status:"activo", activatedAt:Date.now()}});
       for(const tk of S.tickets.values()) if(tk.tid===S.tid && tk.type==="Activación" && tk.status!=="resuelto" && tk.subject.includes(CONNECTORS.find(x=>x.id===S.wizard).title)){ await writeTicket({...tk, status:"resuelto", replies:[...(tk.replies||[]),{by:me().id,name:me().name,text:"Canal activado.",at:Date.now()}]}); }
       toast("Canal marcado como activo"); break; }
@@ -2799,7 +2808,7 @@ function subscribeTenant(){
   tenantUnsubs.push(
     db.doc(P("config/main")).onSnapshot(mine(snap=>{ S.config = snap.exists ? {...structuredClone(DEFAULT_CONFIG), ...JSON.parse(JSON.stringify(snap.data()))} : structuredClone(DEFAULT_CONFIG); S.configLoaded=true;
       // Empresa que se registró sola: al primer ingreso del administrador se aplica la plantilla de su sector (una sola vez)
-      if(S.config.tplPending && !isProv() && can("config")){ const tpl=SECTOR_TPL[S.config.sector]; const patch={tplPending:false, ...(tpl?{assistant:tpl.assistant, services:tpl.services, faqs:tpl.faqs, biz:{...BIZ_DEFAULT, services:tpl.agendaServices, agendaOn:tpl.agendaServices.length>0}}:{})}; writeConfig(patch); }
+      if(S.config.tplPending && !isProv() && can("config")){ const tpl=SECTOR_TPL[S.config.sector]; const patch={tplPending:false, ...(tpl?{assistant:tpl.assistant, services:tpl.services, faqs:tpl.faqs, biz:{...BIZ_DEFAULT, ...(S.config.biz||{}), digest:{...(BIZ_DEFAULT.digest||{}), ...((S.config.biz||{}).digest||{})}, services:tpl.agendaServices, agendaOn:tpl.agendaServices.length>0}}:{})}; writeConfig(patch); }
       render(); }), ()=>{}),
     db.collection(P("users")).onSnapshot(mine(snap=>{ S.users=toMap(snap); render(); }), ()=>{}),
     db.doc(P("config/logo")).onSnapshot(mine(snap=>{ S.logo = snap.exists ? String(snap.data().data||"") : ""; render(); }), ()=>{}),
