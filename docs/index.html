@@ -601,6 +601,18 @@ function nextFollow(l){
   return {step:i, at:l.lastOutboundAt + (Number(steps[i].hours)||0)*3600e3};
 }
 const isDue = l => { const n=nextFollow(l); return n && n.at<=now(); };
+/* WhatsApp de un clic: el mensaje que SofIA no pudo entregar (el cliente solo dejó celular o se fue del chat)
+   lo envía el asesor desde su propio WhatsApp, ya escrito; no hay conexión de la app con WhatsApp */
+const waNum = p => { let d=String(p||"").replace(/\D/g,""); if(d.length===10&&d[0]==="3") d="57"+d; return d.length>=11&&d.length<=15?d:""; };
+function waPend(l){
+  if(!l||l.optOut||l.demo||l.stage==="perdido"||!waNum(l.phone)) return null;
+  const ms=l.messages||[];
+  // Solo cuenta el último mensaje enviado: si después escribió el cliente o un asesor, ya no hace falta
+  const m=[...ms].reverse().find(x=>x.from!=="bot"); if(!m||m.from!=="auto"||m.wa) return null;
+  return now()-(m.at||0)<7*DAY && (m.d==="sin canal activo" || (m.d==="web" && now()-(l.lastInboundAt||0)>30*60000)) ? m : null;
+}
+const waHref = (l,m) => `https://wa.me/${waNum(l.phone)}?text=${encodeURIComponent(m.text)}`;
+const waBtn = (l,m,cls="") => `<a class="btn sm wa ${cls}" style="text-decoration:none" href="${waHref(l,m)}" target="_blank" rel="noopener" data-wa="${esc(l.id)}|${m.at}">Enviar por WhatsApp</a>`;
 const needsReply = l => l.stage!=="perdido" && (l.awaiting==="empresa" || l.handoff);
 
 /* ---------- persistence ---------- */
@@ -969,7 +981,7 @@ function vInbox(){
   const nf=nextFollow(l);
   const thread=`<div class="panel thread"><div class="row" style="justify-content:space-between;margin-bottom:10px"><div><b style="font-size:16px">${esc(l.name||"Sin nombre")}</b> ${chip(l.channel)} ${consentChip(l)} ${l.csat?`<span class="chip">Calificó ${l.csat}/5</span>`:""} ${l.stage==="perdido"&&l.lossReason?`<span class="chip st-perdido">Perdido: ${esc(l.lossReason)}</span>`:""}</div>
       <label class="toggle"><input type="checkbox" id="pause" ${l.followPaused?"checked":""}> Pausar automatización</label></div>
-    <div class="msgs" id="msgs-${l.id}">${(l.messages||[]).map(m=>`<div class="msg ${m.from==="cliente"?"":"out "+m.from}">${esc(m.text)}<small>${lbl[m.from]||""}${m.by?" · "+esc(userName(m.by)):""}${m.step?" · paso "+m.step:""} · ${ago(m.at)}</small></div>`).join("")||'<p class="muted">Sin mensajes todavía.</p>'}${S.typing.has(l.id)?'<div class="msg out bot typing">El asistente está escribiendo…</div>':""}</div>
+    <div class="msgs" id="msgs-${l.id}">${(l.messages||[]).map(m=>`<div class="msg ${m.from==="cliente"?"":"out "+m.from}">${esc(m.text)}<small>${lbl[m.from]||""}${m.by?" · "+esc(userName(m.by)):""}${m.step?" · paso "+m.step:""} · ${ago(m.at)}${m.wa?" · enviado por WhatsApp"+(m.waBy?" ("+esc(userName(m.waBy))+")":""):""}</small>${m===waPend(l)?`<div style="margin-top:6px">${waBtn(l,m)}</div>`:""}</div>`).join("")||'<p class="muted">Sin mensajes todavía.</p>'}${S.typing.has(l.id)?'<div class="msg out bot typing">El asistente está escribiendo…</div>':""}</div>
     <div class="composer"><div class="row qr">${biz().quick.map((q,i)=>`<button class="btn sm ghost" data-qr="${i}" title="${esc(q.x)}">${esc(q.t)}</button>`).join("")}</div>
     ${l.optOut?'<p class="note" style="margin:0;background:var(--bad-soft);color:var(--bad)">Este cliente pidió no recibir más mensajes. Solo respóndale si él vuelve a escribir.</p>':""}
     <textarea id="reply" placeholder="Escriba una respuesta como asesor" aria-label="Respuesta"></textarea>
@@ -2402,7 +2414,7 @@ function vMyDay(){
   const wait=L.filter(needsReply).sort((a,b)=>waitingMin(b)-waitingMin(a));
   const tasks=allTasks().filter(t=>!t.done && mine(t.lead) && (t.due||0)<=now()+DAY).sort((a,b)=>(a.due||0)-(b.due||0));
   const citas=apptArr().filter(a=>a.status==="programada" && sameDay(a.at,now()) && (!a.owner||mine({owner:a.owner})));
-  const fol=L.filter(isDue);
+  const fol=L.filter(isDue), waL=L.map(l=>({l,m:waPend(l)})).filter(x=>x.m).sort((a,b)=>a.m.at-b.m.at);
   const cu=L.filter(l=>l.stage==="ganado"), hoyF=cu.flatMap(l=>upcoming(l,1).map(u=>({...u,l}))), casos=cu.filter(l=>openCases(l).length), riesgo=cu.filter(l=>riskOf(l)&&!openCases(l).length).slice(0,6);
   const cob=featOn("collect")&&canView("cobros")?[...S.invoices.values()].filter(i=>balOf(i)>0&&lateDays(i)>0&&(!i.leadId||mine(S.leads.get(i.leadId)||{}))).slice(0,8):[];
   return head("Mi día",`Hola ${esc((me().name||"").replace(/^Ejemplo\s*·\s*/,"").split(" ")[0])}. Esto es lo que necesita su atención hoy.`, `<span class="clock">${clockStr()}</span>`)
@@ -2411,6 +2423,7 @@ function vMyDay(){
     <div class="kpi"><small>Citas de hoy</small><b>${citas.length}</b><em>Agenda</em></div>
     <div class="kpi ${casos.length?"alert":""}"><small>Sus clientes</small><b>${casos.length}</b><em>Casos abiertos · ${hoyF.length} fecha${hoyF.length===1?"":"s"} especial${hoyF.length===1?"":"es"} hoy</em></div>
     ${featOn("collect")&&canView("cobros")?`<div class="kpi ${cob.length?"alert":""}"><small>Cobros en mora</small><b>${cob.length}</b><em>De sus clientes</em></div>`:""}</div>
+  ${waL.length?`<div class="panel" style="margin-bottom:14px"><h2>Enviar por WhatsApp · ${waL.length}</h2><p class="muted" style="font-size:12.5px;margin:-4px 0 8px">Estos clientes solo dejaron su celular o ya se fueron del chat, así que ${esc(S.config.assistant||"SofIA")} no les puede escribir. Pulse el botón: se abre su WhatsApp con el mensaje ya escrito; usted solo pulsa «Enviar».</p><div class="list">${waL.slice(0,15).map(({l,m})=>`<div class="item"><div class="t"><b>${esc(l.name||l.phone)}</b><p>${esc(m.text.length>140?m.text.slice(0,140)+"…":m.text)}</p></div><div class="row" style="flex-wrap:nowrap">${waBtn(l,m)}<button class="btn sm ghost" data-open="${l.id}">Abrir</button></div></div>`).join("")}</div></div>`:""}
   <div class="grid g2" style="align-items:start">
     <div class="panel"><h2>Responder primero</h2><p class="muted" style="font-size:12.5px;margin:-4px 0 8px">Llegan solas del chat de su página, el formulario, el correo y las redes. Cuando usted responde en la Bandeja, la persona sale de esta lista.</p>${wait.length?`<div class="list">${wait.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||l.phone||"Sin nombre")}</b><p>${esc((l.messages||[]).filter(m=>m.from==="cliente").slice(-1)[0]?.text||"")}</p></div><div class="row">${slaLate(l)?`<span class="chip hand">${waitingMin(l)} min</span>`:`<span class="chip">${waitingMin(l)} min</span>`}<button class="btn sm primary" data-open="${l.id}">Responder</button></div></div>`).join("")}</div>`:'<p class="muted">Nadie está esperando. Muy bien.</p>'}</div>
     <div class="panel"><h2>Tareas</h2>${tasks.length?`<div class="list">${tasks.map(t=>`<div class="item"><label class="toggle t" style="align-items:flex-start"><input type="checkbox" data-ptask="${t.lead.id}|${t.id}"><span><b>${esc(t.text)}</b><br><span class="muted">${esc(t.lead.name||"")} · ${t.due?((t.due<now()?"vencida ":"")+fdt(t.due)):"sin fecha"}</span></span></label><button class="btn sm" data-open="${t.lead.id}">Abrir</button></div>`).join("")}</div>`:'<p class="muted">Sin tareas pendientes para hoy. Cree tareas desde la ficha de cada cliente.</p>'}</div>
@@ -2489,6 +2502,7 @@ function vSettings(){
       <label class="toggle"><input type="checkbox" id="dg-on" ${b.digest.on?"checked":""}> Enviar cada día a las 7:00 p. m.</label>
       <label class="f">Correo del propietario (vacío: el del administrador)<input type="email" id="dg-to" value="${esc(b.digest.to)}"></label>
       <label class="toggle"><input type="checkbox" id="av-on" ${S.config.avisoEquipo!==false?"checked":""}> Avisar por correo al instante cada interesado nuevo y cada cliente que pida un asesor</label>
+      <label class="toggle"><input type="checkbox" id="vm-on" ${S.config.valorMes!==false?"checked":""}> Enviar al administrador, el día 1 de cada mes, el informe de lo que Agente-IA hizo por la empresa el mes anterior</label>
       <div class="code" style="white-space:pre-wrap">${esc(digestText())}</div>
       <div class="row"><button class="btn sm" data-pact="copydigest">Copiar resumen de hoy</button></div></div></div>
   </div></div>`;
@@ -2588,6 +2602,14 @@ function healthOf(t){
 
 /* ---------- eventos del paquete ---------- */
 document.addEventListener("click", async e=>{
+  const w=e.target.closest("[data-wa]");
+  if(w){ // el enlace abre WhatsApp; aquí solo se marca el mensaje como enviado por el asesor
+    const [lid,at]=w.dataset.wa.split("|"); const lead=S.leads.get(lid); if(!lead) return;
+    if(window.GC_USER&&window.GC_USER.demo){ toast("En la demostración no se abre WhatsApp: así funcionará con sus clientes."); e.preventDefault(); return; }
+    const x=structuredClone(lead); const m=(x.messages||[]).find(mm=>String(mm.at)===at&&mm.from==="auto"); if(!m||m.wa) return;
+    m.wa=now(); m.waBy=me().id; m.d="ok: WhatsApp del asesor"; x.lastOutboundAt=Math.max(x.lastOutboundAt||0,m.wa);
+    setTimeout(async()=>{ await writeLead(x); logAudit("Seguimiento por WhatsApp", x.name||x.phone||""); toast("Listo. Quedó anotado como enviado por WhatsApp."); },300);
+    return; }
   const t=e.target.closest("[data-pact],[data-appt],[data-qr],[data-ptask],[data-quote]"); if(!t) return;
   if(t.dataset.ptask){ const [lid,tid]=t.dataset.ptask.split("|"); await toggleTask(lid,tid); return; }
   if(t.dataset.appt){ const [id,st]=t.dataset.appt.split("|"); const a=S.appts.get(id); if(a){ await writeAppt({...a,status:st}); logAudit("Cita "+st, a.client); if(st==="asistio"){ const l=S.leads.get(a.leadId); } toast("Cita actualizada"); } return; }
@@ -2616,7 +2638,7 @@ document.addEventListener("click", async e=>{
         assign:$("#as-mode").value, slaMin:Math.max(1,Number($("#as-sla").value)||15), goals:{value:Number($("#g-val").value)||0, count:Number($("#g-cnt").value)||0}, ads,
         catalog:readCatalog(), payLink:$("#pay-link").value.trim(), quick:readQuick().filter(q=>q.t.trim()||q.x.trim()),
         privacy:{on:$("#pv-on").checked, text:$("#pv-text").value, url:$("#pv-url").value.trim()}, survey:{on:$("#sv-on").checked, text:$("#sv-text").value},
-        lossReasons:$("#loss-list").value.split(",").map(x=>x.trim()).filter(Boolean), digest:{on:$("#dg-on").checked, to:$("#dg-to").value.trim()}}); writeConfig({avisoEquipo:$("#av-on").checked});
+        lossReasons:$("#loss-list").value.split(",").map(x=>x.trim()).filter(Boolean), digest:{on:$("#dg-on").checked, to:$("#dg-to").value.trim()}}); writeConfig({avisoEquipo:$("#av-on").checked, valorMes:$("#vm-on").checked});
       logAudit("Ajustes comerciales guardados",""); toast("Ajustes guardados"); break; }
     case "addcat": S.fresh=true; saveBiz({catalog:[...readCatalog(), {n:"",p:0,d:""}]}); break;
     case "delcat": S.fresh=true; { const c=readCatalog(); c.splice(Number(arg),1); saveBiz({catalog:c}); } break;
