@@ -605,7 +605,7 @@ const isDue = l => { const n=nextFollow(l); return n && n.at<=now(); };
    lo envía el asesor desde su propio WhatsApp, ya escrito; no hay conexión de la app con WhatsApp */
 const waNum = p => { let d=String(p||"").replace(/\D/g,""); if(d.length===10&&d[0]==="3") d="57"+d; return d.length>=11&&d.length<=15?d:""; };
 function waPend(l){
-  if(!l||l.optOut||l.demo||l.stage==="perdido"||!waNum(l.phone)) return null;
+  if(!l||l.optOut||l.stage==="perdido"||!waNum(l.phone)) return null;
   const ms=l.messages||[];
   // Solo cuenta el último mensaje enviado: si después escribió el cliente o un asesor, ya no hace falta
   const m=[...ms].reverse().find(x=>x.from!=="bot"); if(!m||m.from!=="auto"||m.wa) return null;
