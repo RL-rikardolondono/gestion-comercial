@@ -117,6 +117,7 @@ async function bootstrapDemo() {
     const d = await db.getDoc(`tenants/${DEMO_TID}/users/${u.id}`);
     if (!d.exists) await db.setDoc(`tenants/${DEMO_TID}/users/${u.id}`, { name: u.name, email: u.email, role: u.role, active: true, createdAt: Date.now() });
   }
+  await require("./demo").seedDemo(DEMO_TID).catch((e) => console.error("datos demo", e.message));
   console.log("Demostración activa con demo@skynetgenesis.com");
 }
 async function demoLogin(role) {

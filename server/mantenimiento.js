@@ -138,6 +138,7 @@ async function revisar(o, motivo) {
 async function resetDemo(now) {
   const tid = require("./auth").DEMO_TID; const t = await db.getDoc("tenants/" + tid); if (!t.exists) return;
   for (const col of ["leads", "invoices", "appts", "audit", "archive", "invarchive"]) for (const x of await db.listCol(`tenants/${tid}/${col}`)) if (!x.data.seed && !x.data.demo && now - (x.data.createdAt || x.data.at || 0) > 6 * 3600e3) await db.delDoc(`tenants/${tid}/${col}/${x.id}`);
+  if (process.env.DEMO_PASSWORD) await require("./demo").seedDemo(tid).catch(() => {}); // datos de ejemplo con fechas de hoy
   const c = await db.getDoc(`tenants/${tid}/config/connections`); if (c.exists && c.data.webhook) { const d = { ...c.data }; delete d.webhook; await db.setDoc(`tenants/${tid}/config/connections`, d); }
 }
 /* ---------- archivo: lo antiguo sale de la vista diaria pero no se pierde ---------- */
