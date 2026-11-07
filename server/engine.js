@@ -457,6 +457,67 @@ async function runDigest(ctx) {
     if (/@/.test(d.to) && !isDemoT(ctx) && (await ch.cupo("resumen", ctx.tid))) await ch.sendEmail(d.to, `Resumen del día · ${ctx.config.company}`, text, { tid: ctx.tid });
   } catch (e) { console.error("resumen", ctx.tid, e.message); }
 }
+// Correo mensual de valor al dueño: el día 1 de cada mes (hasta el día 3 si el servidor estuvo dormido), desde las 8 a. m.,
+// le cuenta lo que Agente-IA hizo por su empresa el mes anterior, para que vea lo que recibe por lo que paga.
+const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+function valorTexto(ctx, desde, hasta) {
+  const en = (ts) => ts && ts >= desde && ts < hasta;
+  const L = [...ctx.leads.values()].filter((l) => !l.demo && !l.sim);
+  const asis = ctx.config.assistant || "SofIA";
+  const msgs = L.flatMap((l) => (l.messages || []).map((m) => ({ ...m, l })));
+  const conv = L.filter((l) => (l.messages || []).some((m) => m.from === "cliente" && en(m.at)));
+  const bot = msgs.filter((m) => m.from === "bot" && en(m.at));
+  const fuera = bot.filter((m) => !isOpen(ctx, m.at));
+  const nuevos = L.filter((l) => en(l.createdAt));
+  const ganados = L.filter((l) => l.stage === "ganado" && en(l.wonAt));
+  const valor = ganados.reduce((s, l) => s + (Number(l.value) || 0), 0);
+  const segs = msgs.filter((m) => m.from === "auto" && !m.care && en(m.at) && /^(ok|web)/.test(m.d || ""));
+  const wa = msgs.filter((m) => m.wa && en(m.wa));
+  const cumple = msgs.filter((m) => m.care && /^(bday|family)/.test(m.care) && en(m.at));
+  const posv = msgs.filter((m) => m.care && !/^(bday|family)/.test(m.care) && en(m.at));
+  const casos = L.reduce((s, l) => s + (l.cases || []).filter((c) => en(c.resolvedAt)).length, 0);
+  const citas = ctx.appts.filter((a) => en(a.at) && a.status !== "cancelada");
+  const esperan = L.filter((l) => l.stage !== "perdido" && (l.awaiting === "empresa" || l.handoff)).length;
+  const intereses = {}; for (const l of nuevos) { const k = String(l.interest || "").trim().toLowerCase(); if (k) intereses[k] = (intereses[k] || 0) + 1; }
+  const top = Object.entries(intereses).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${k} (${n})`);
+  const sin = [...new Set(bot.filter((m) => m.unknown).map((m) => m.unknown))];
+  const mes = MESES[local(desde + DAY).m];
+  const vacio = !conv.length && !nuevos.length && !ganados.length && !segs.length;
+  const pl = (n, a, b) => `${n} ${n === 1 ? a : b}`;
+  const lin = [];
+  if (vacio) {
+    lin.push(`En ${mes} ${asis} no recibió conversaciones ni prospectos nuevos.`, "", "Para que empiece a trabajar por su empresa:",
+      "1. Revise que el chat esté instalado en su página web (Conexiones › Chat para la página web).", "2. Comparta el enlace de su formulario en redes sociales y en WhatsApp.", "3. Llene la Base de conocimiento con sus precios y horarios.", "", "Si necesita ayuda, escríbanos y lo acompañamos.");
+  } else {
+    lin.push(`Esto es lo que Agente-IA hizo por ${ctx.config.company} en ${mes}:`, "");
+    lin.push(`• ${asis} atendió ${pl(conv.length, "conversación", "conversaciones")} y respondió ${pl(bot.length, "mensaje", "mensajes")}${fuera.length ? `; ${fuera.length} ${fuera.length === 1 ? "fue" : "fueron"} fuera del horario de atención` : ""}.`);
+    lin.push(`• ${nuevos.length === 1 ? "Llegó 1 interesado nuevo" : `Llegaron ${nuevos.length} interesados nuevos`} y se ${ganados.length === 1 ? "cerró 1 venta" : `cerraron ${ganados.length} ventas`}${valor ? ` por ${cop(valor)}` : ""}.`);
+    if (segs.length || wa.length) lin.push(`• ${segs.length + wa.length === 1 ? "Se envió 1 seguimiento" : `Se enviaron ${segs.length + wa.length} seguimientos`}${wa.length ? ` (${wa.length} por WhatsApp desde su equipo)` : ""}.`);
+    if (citas.length) lin.push(`• ${citas.length === 1 ? "Se agendó 1 cita" : `Se agendaron ${citas.length} citas`}.`);
+    if (cumple.length || posv.length || casos) lin.push("• Posventa: " + [cumple.length && pl(cumple.length, "saludo de cumpleaños", "saludos de cumpleaños"), posv.length && pl(posv.length, "mensaje de seguimiento a clientes", "mensajes de seguimiento a clientes"), casos && pl(casos, "caso de soporte resuelto", "casos de soporte resueltos")].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " y $1") + ".");
+    lin.push(esperan ? `• Hoy hay ${esperan} cliente${esperan === 1 ? "" : "s"} esperando respuesta de su equipo: entre a «Mi día» para ${esperan === 1 ? "atenderlo" : "atenderlos"}.` : "• Ningún cliente quedó esperando respuesta de su equipo.");
+    if (top.length) lin.push("", `Lo que más buscaron sus interesados: ${top.join(", ")}.`);
+    if (sin.length) lin.push("", `Consejo: hay ${sin.length} pregunta${sin.length === 1 ? "" : "s"} que ${asis} no supo responder. ${sin.length === 1 ? "Agréguela" : "Agréguelas"} a la Base de conocimiento para que la próxima vez responda sola:`, ...sin.slice(0, 5).map((q) => `  – ${q}`));
+  }
+  lin.push("", "Entre a Agente-IA: https://agente-ia.skynetgenesis.com", "", "Este informe le llega el primer día de cada mes. Puede apagarlo en Ajustes comerciales.");
+  return { text: lin.join("\n"), mes, vacio };
+}
+async function runValor(ctx) {
+  if (isDemoT(ctx) || ctx.config.valorMes === false || !ch.mailOn()) return;
+  const now = Date.now(), L = local(now);
+  const at8 = Date.UTC(L.y, L.m, 1, 8 - TZ, 0), sig = Date.UTC(L.y, L.m + 1, 1, 8 - TZ, 0);
+  if (L.d > 3 || now < at8) { due(now < at8 ? at8 : sig); return; }
+  due(sig);
+  const desde = Date.UTC(L.y, L.m - 1, 1, -TZ, 0), hasta = Date.UTC(L.y, L.m, 1, -TZ, 0);
+  if ((ctx.tenant.createdAt || 0) >= hasta) return; // empresa nueva este mes: aún no tiene mes anterior
+  const k = `valor:${ctx.tid}:${local(desde + DAY).y}-${local(desde + DAY).m + 1}`; if (await db.kvGet(k)) return;
+  const to = [...new Set((ctx.users || []).filter((u) => u.role === "admin" && u.active !== false && /@/.test(u.email || "")).map((u) => u.email.toLowerCase()))].slice(0, 3);
+  if (!to.length) return;
+  if (!(await ch.cupo("resumen", ctx.tid))) return; // sin cupo hoy: se intenta en la siguiente ronda
+  await db.kvSet(k, now);
+  const r = valorTexto(ctx, desde, hasta);
+  for (const e of to) { try { await ch.sendEmail(e, `${r.vacio ? "Su informe" : "Lo que Agente-IA hizo por usted"} en ${r.mes} · ${ctx.config.company}`, r.text, { tid: ctx.tid }); } catch (err) { console.error("valor mensual", ctx.tid, err.message); } }
+}
 // Avisos de mensualidad con la regla vigente: se paga hasta el día 4; el día 5 sin pago se cierra (sin cuenta regresiva)
 const PAGO_TXT = "Pague en línea desde Agente-IA con todos los medios de pago (tarjeta débito o crédito, PSE, Nequi, llave Bre-B).";
 const BILL_STEPS = [
@@ -496,7 +557,7 @@ async function tick(only, force) {
     for (const t of tenants) {
       if (only && t.id !== only) continue;
       if (t.data.status === "suspendido" || cobro.cerrada(t.data)) continue;
-      try { const ctx = await loadTenant(t.id); await runFollowups(ctx); await runCollect(ctx); await runAppts(ctx); await runCare(ctx); await runDigest(ctx); }
+      try { const ctx = await loadTenant(t.id); await runFollowups(ctx); await runCollect(ctx); await runAppts(ctx); await runCare(ctx); await runDigest(ctx); await runValor(ctx); }
       catch (e) { console.error("tick", t.id, e.message); }
     }
     if (!only) { try { await mant.genMonth(); await mant.daily(); await mant.trialMorning(); await ASESOR.semanal(); } catch (e) { console.error("mantenimiento", e.message); } await runBilling(); }
@@ -518,4 +579,4 @@ docs.onWrite(async ({ path, data, prev }) => {
   if (s[0] === "billing" && s.length === 2) await dispatchBilling(path, data);
 });
 
-module.exports = { runCare, markDirty, tick, handleInbound, loadTenant, collectAllowedAt, isHoliday, botAnswer, fromIsoLocal, isoLocal };
+module.exports = { valorTexto, runValor, runCare, markDirty, tick, handleInbound, loadTenant, collectAllowedAt, isHoliday, botAnswer, fromIsoLocal, isoLocal };
