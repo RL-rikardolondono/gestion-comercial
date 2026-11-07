@@ -90,6 +90,8 @@
     }
     document.getElementById("gc-reg").onclick = function (e) { e.preventDefault(); location.hash = "registro"; registro(); };
     if (/registro/.test(location.hash)) { registro(); return; }
+    // Enlace directo a la demostración desde skynetgenesis.com (#demo): entra como Administrador de la Empresa Demo
+    if (/^#demo/.test(location.hash)) { var dmb = w.querySelector('[data-demo="admin"]'); history.replaceState(null, "", location.pathname); if (dmb) { dmb.click(); return; } }
     var rt = (location.hash.match(/reset=([A-Za-z0-9_-]+)/) || [])[1];
     if (rt) {
       var f0 = document.getElementById("gc-login");
