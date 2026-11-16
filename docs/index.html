@@ -2103,7 +2103,7 @@ document.addEventListener("click", async e=>{
   try{ await window.GC_req("POST","/api/sa/interna",{tid:b.dataset.id,interna:!(t&&t.interna),motivo:m}); toast(t&&t.interna?"La empresa ya no es interna: vuelve a pagar su mensualidad.":"Empresa interna: queda activa siempre, sin prueba ni cobros."); if(t) S.tenants.set(b.dataset.id,{...t,interna:!t.interna}); S.intAsk=null; render(); }
   catch(err){ toast(err.message||"No se pudo cambiar."); }
 });
-/* ---------- Market: «Asesor con IA para su página web» (basado en Dayana, de poliandes.com) ---------- */
+/* ---------- Market: «Asesor con IA para su página web» ---------- */
 function vAsesor(){
   const A=Object.assign({on:false,urls:[],notas:"",casos:"",wa:"",dominios:[]}, S.config.asesor||{}), nm=esc(S.config.assistant||"SofIA");
   if(SRV && !S.iaEstado && !S.iaCargando){ S.iaCargando=true; window.GC_req("GET","/api/ia/estado").then(j=>{ S.iaEstado=j; S.iaCargando=false; render(); }).catch(()=>{ S.iaCargando=false; }); }
