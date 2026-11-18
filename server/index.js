@@ -262,6 +262,28 @@ app.post("/api/sa/interna", async (req, res) => {
   res.json({ ok: true });
 });
 
+// Borrar una empresa de PRUEBA (las que se crean para la Prueba Ácida). Solo el Superadministrador, escribiendo el nombre exacto.
+// Nunca borra la demostración, una empresa interna, ni una empresa que haya pagado algo (esas son clientes reales).
+app.post("/api/sa/borrar-empresa", async (req, res) => {
+  if (!req.user.staff) return res.status(403).json({ error: "Solo el Superadministrador." });
+  const tid = String(req.body?.tid || ""), nombre = String(req.body?.nombre || "").trim();
+  if (!db.validPath("tenants/" + tid, true) || tid === auth.DEMO_TID) return res.status(400).json({ error: "Esa empresa no se puede borrar." });
+  const t = await db.getDoc("tenants/" + tid); if (!t.exists) return res.status(404).json({ error: "Empresa no encontrada." });
+  if (t.data.demo || t.data.interna) return res.status(400).json({ error: "La demostración y las empresas internas no se borran." });
+  const pagos = (await db.listCol("boldpagos")).filter((x) => x.data && x.data.tid === tid && !x.data.prueba);
+  if (t.data.paidOnce || pagos.length) return res.status(400).json({ error: "Esta empresa ya pagó: es un cliente real y no se borra desde aquí." });
+  if (nombre !== String(t.data.name || "").trim()) return res.status(400).json({ error: "Escriba el nombre de la empresa exactamente como aparece." });
+  const users = (await db.pool.query("SELECT id, email FROM auth_users WHERE tenant_id=$1", [tid])).rows;
+  const docsBorrados = (await db.pool.query("DELETE FROM docs WHERE path=$1 OR path LIKE $2 RETURNING path", ["tenants/" + tid, "tenants/" + tid + "/%"])).rowCount;
+  for (const x of await db.listCol("billing")) if (x.data && x.data.tid === tid) await db.delDoc("billing/" + x.id);
+  for (const x of await db.listCol("tickets")) if (x.data && x.data.tid === tid) await db.delDoc("tickets/" + x.id);
+  await db.pool.query("DELETE FROM auth_users WHERE tenant_id=$1", [tid]);
+  await db.pool.query("DELETE FROM secrets WHERE tenant_id=$1", [tid]).catch(() => {});
+  db.bumpCol("tenants"); db.mem.doc.delete("tenants/" + tid);
+  await db.setDoc("bitacora/" + Date.now().toString(36), { at: Date.now(), by: req.user.id, accion: "borrar empresa de prueba", tid, empresa: t.data.name, usuarios: users.map((u) => u.email), documentos: docsBorrados });
+  res.json({ ok: true, documentos: docsBorrados, usuarios: users.length });
+});
+
 // Pagos: solo con el Bold de SkyNet Genesis (ver server/bold.js). Sin llave, sin «Ya pagué», sin desbloqueo provisional.
 bold.firmaRoute(app);
 require("./plan").routes(app);
