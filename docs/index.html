@@ -1435,7 +1435,7 @@ function vClients(){
       <td><b>${fechaPago(pagadoHasta(t))}</b><br>${(()=>{const ep=estadoPago(t);return `<span class="chip ${ep.cls}">${ep.t}</span>`})()}</td>
       <td><select data-tstatus="${t.id}" aria-label="Estado">${["activo","suspendido"].map(x=>`<option value="${x}" ${((t.status==="prueba"?"activo":t.status)||"activo")===x?"selected":""}>${x[0].toUpperCase()+x.slice(1)}</option>`).join("")}</select></td>
       <td>${t.createdAt?new Date(t.createdAt).toLocaleDateString("es-CO"):"—"}</td>
-      <td><button class="btn sm" data-enter="${t.id}">Administrar</button>${SRV&&!t.demo?(S.intAsk===t.id?`<div class="row" style="margin-top:6px;flex-wrap:nowrap"><input type="text" id="int-mot" placeholder="Motivo (ej.: empresa propia)" aria-label="Motivo" style="min-width:170px"><button class="btn sm primary" data-int="ok" data-id="${t.id}">${t.interna?"Quitar":"Confirmar"}</button><button class="btn sm ghost" data-int="no">Cancelar</button></div>`:`<br><button class="btn sm ghost" style="margin-top:6px" data-int="ask" data-id="${t.id}" title="Solo para las empresas propias de SkyNet Genesis: activa siempre, sin prueba ni cobros">${t.interna?"Quitar interna":"Hacer interna"}</button>`):""}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty"><b>Aún no hay empresas clientes</b>Cree la primera con el botón Nueva empresa cliente.</div>'}</div>
+      <td><button class="btn sm" data-enter="${t.id}">Administrar</button>${SRV&&!t.demo?(S.intAsk===t.id?`<div class="row" style="margin-top:6px;flex-wrap:nowrap"><input type="text" id="int-mot" placeholder="Motivo (ej.: empresa propia)" aria-label="Motivo" style="min-width:170px"><button class="btn sm primary" data-int="ok" data-id="${t.id}">${t.interna?"Quitar":"Confirmar"}</button><button class="btn sm ghost" data-int="no">Cancelar</button></div>`:`<br><button class="btn sm ghost" style="margin-top:6px" data-int="ask" data-id="${t.id}" title="Solo para las empresas propias de SkyNet Genesis: activa siempre, sin prueba ni cobros">${t.interna?"Quitar interna":"Hacer interna"}</button>`):""}${SRV&&!t.demo&&!t.interna&&!t.paidOnce?(S.delAsk===t.id?`<div class="row" style="margin-top:6px;flex-wrap:nowrap"><input type="text" id="del-nom" placeholder="Escriba el nombre exacto" aria-label="Nombre exacto de la empresa" style="min-width:170px"><button class="btn sm" style="border-color:#B93A27;color:#B93A27" data-delt="ok" data-id="${t.id}">Borrar</button><button class="btn sm ghost" data-delt="no">Cancelar</button></div>`:`<br><button class="btn sm ghost" style="margin-top:6px;color:#B93A27" data-delt="ask" data-id="${t.id}" title="Solo empresas de prueba que nunca han pagado: se borran con todos sus datos y usuarios">Borrar (prueba)</button>`):""}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty"><b>Aún no hay empresas clientes</b>Cree la primera con el botón Nueva empresa cliente.</div>'}</div>
   <div class="panel"><h2>Solicitudes de soporte, mejoras y activaciones</h2>${tk.length?`<div class="list">${tk.sort((a,b)=>(a.status==="resuelto")-(b.status==="resuelto")||(prio[a.priority]??1)-(prio[b.priority]??1)||(b.createdAt-a.createdAt)).map(ticketRow).join("")}</div>`:'<p class="muted">No hay solicitudes.</p>'}</div>`;
 }
 const TK_STATUS={abierto:["Abierta","due"],en_proceso:["En proceso","web"],resuelto:["Resuelta","st-ganado"]};
@@ -2211,6 +2211,15 @@ document.addEventListener("click", async e=>{
   const t=S.tenants.get(b.dataset.id); const m=((document.getElementById("int-mot")||{}).value||"").trim(); if(!m) return toast("Escriba el motivo.");
   try{ await window.GC_req("POST","/api/sa/interna",{tid:b.dataset.id,interna:!(t&&t.interna),motivo:m}); toast(t&&t.interna?"La empresa ya no es interna: vuelve a pagar su mensualidad.":"Empresa interna: queda activa siempre, sin prueba ni cobros."); if(t) S.tenants.set(b.dataset.id,{...t,interna:!t.interna}); S.intAsk=null; render(); }
   catch(err){ toast(err.message||"No se pudo cambiar."); }
+});
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("[data-delt]"); if(!b) return; const a=b.dataset.delt;
+  if(a==="ask"){ S.delAsk=b.dataset.id; render(); const m=document.getElementById("del-nom"); if(m) m.focus(); return; }
+  if(a==="no"){ S.delAsk=null; return render(); }
+  const t=S.tenants.get(b.dataset.id); const n=((document.getElementById("del-nom")||{}).value||"").trim();
+  if(!t||n!==String(t.name||"").trim()) return toast("Escriba el nombre de la empresa exactamente como aparece.");
+  try{ const r=await window.GC_req("POST","/api/sa/borrar-empresa",{tid:b.dataset.id,nombre:n}); S.tenants.delete(b.dataset.id); S.delAsk=null; render(); toast(`Empresa de prueba borrada (${r.usuarios} ${r.usuarios===1?"usuario":"usuarios"}, ${r.documentos} documentos).`); }
+  catch(err){ toast(err.message||"No se pudo borrar."); }
 });
 /* ---------- Market: «Asesor con IA para su página web» ---------- */
 function vAsesor(){
