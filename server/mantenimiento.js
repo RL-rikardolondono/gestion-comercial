@@ -21,6 +21,7 @@ async function genMonth(now = Date.now(), force = false) {
   if (bc.autoGen === false && !force) return 0;
   const per = monthKey(now), key = "gen:" + per;
   if (!force && await db.kvGet(key)) return 0;
+  await require("./plan").aplicarProgramados().catch((e) => console.error("planes programados", e.message));
   const pricing = { ...PRICE, ...(st.pricing || {}) };
   const bills = (await db.listCol("billing")).map((x) => x.data);
   let n = Math.max(0, ...bills.map((b) => Number(String(b.number || "").match(/(\d+)\s*$/)?.[1]) || 0)) + 1, c = 0;
@@ -50,6 +51,7 @@ function parsePlan(plan) {
   if (m[1] === "prueba") return { prueba: true };
   if (require("./ia").PACKS[m[1]]) return { ia: m[1] }; // paquete de inteligencia artificial (Market)
   if (PLAN_KEY[m[1]]) return { plan: m[1], sedes: 0 };
+  const dq = m[1].match(/^paq_dif-x(\d{1,4})$/); if (dq) return { dif: Number(dq[1]) }; // diferencia por subir de plan
   const pq = m[1].match(/^paq_(basico|pro|empresarial)(?:_sede-x(\d{1,3}))?$/); if (!pq) return null;
   return { plan: pq[1], sedes: Number(pq[2] || 0) };
 }
@@ -95,6 +97,17 @@ async function aplicarReservado(o, ref, st = {}) {
   const tid = String(o.empresa || "").split("__")[0];
   const t = await db.getDoc("tenants/" + tid);
   if (!t.exists || t.data.demo) { await revisar(o, "empresa no encontrada"); return { ok: true, revisar: true }; }
+  // Diferencia por subir de plan con el mes pagado: cambia el plan, no toca «Pagado hasta»
+  if (pp.dif) {
+    const pedido = String(o.empresa || "").split("__")[1] || "";
+    const r = await require("./plan").aplicarDiferencia(o, tid, pedido);
+    if (r.revisar) { await revisar({ ...o, tid }, r.revisar); return { ok: true, revisar: true }; }
+    if (r.repetido) return { ok: true, repetido: true };
+    st.escrito = true;
+    const rec = { tid, tenantName: t.data.name, pago_id: String(o.pago_id), referencia: ref, plan: o.plan, valor: Number(o.valor) || 0, at: Date.now(), concepto: "Cambio al plan " + r.label + " (diferencia de este mes)", receiptN: Number((await db.kvGet("boldrecibo")) || 0) + 1 };
+    await db.kvSet("boldrecibo", rec.receiptN); await db.setDoc("boldpagos/" + safeId(o.pago_id), rec);
+    return { ok: true, planCambio: true, plan: r.plan, label: r.label };
+  }
   // Paquete de IA: suma respuestas y tope de gasto por 30 días; no toca «Pagado hasta»
   if (pp.ia) {
     const IA = require("./ia"), pk = IA.PACKS[pp.ia];
@@ -105,9 +118,12 @@ async function aplicarReservado(o, ref, st = {}) {
     await db.kvSet("boldrecibo", rec.receiptN); await db.setDoc("boldpagos/" + safeId(o.pago_id), rec);
     return { ok: true, ia: true, iaHasta: nia.until, left: nia.left };
   }
-  const esperado = await feeOf(t.data, tid);
+  // Bajada programada: el pago del periodo siguiente ya es con el plan nuevo, y al pagarlo el cambio queda hecho
+  // (el plan sigue igual hasta el fin de lo ya pagado; el cambio lo hace el mantenimiento diario ese día)
+  const tPago = t.data.planNext && pp.plan === t.data.planNext && t.data.paidOnce ? { ...t.data, plan: t.data.planNext } : t.data;
+  const esperado = await feeOf(tPago, tid);
   if ((Number(o.valor) || 0) < esperado) { await revisar({ ...o, tid, esperado }, "el valor no cubre la mensualidad del plan de la empresa"); return { ok: true, revisar: true }; }
-  if (pp.plan !== t.data.plan) { await revisar({ ...o, tid, esperado }, "el plan pagado no es el plan de la empresa"); return { ok: true, revisar: true }; }
+  if (pp.plan !== tPago.plan) { await revisar({ ...o, tid, esperado }, "el plan pagado no es el plan de la empresa"); return { ok: true, revisar: true }; }
   const hoy = cobro.HOY(), nuevo = cobro.trasPago(t.data, hoy), now = Date.now();
   // Solo las mensualidades de los meses cubiertos quedan pagadas (hasta el valor recibido); otros cobros no se tocan
   let queda = Number(o.valor) || 0;
@@ -188,6 +204,7 @@ async function trialMails(now) {
 async function daily(now = Date.now()) {
   const k = "daily:" + new Date(now + TZ * 3600e3).toISOString().slice(0, 10);
   if (await db.kvGet(k)) return null; await db.kvSet(k, now);
+  await require("./plan").aplicarProgramados().catch(() => {}); // bajadas de plan programadas que ya empiezan
   let archived = 0;
   for (const t of await db.listCol("tenants")) archived += await archiveTenant(t.id, now);
   // Demostración pública: cada día se borra lo que escribieron los visitantes (no se acumulan datos ajenos)

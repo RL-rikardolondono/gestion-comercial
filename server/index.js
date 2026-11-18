@@ -33,7 +33,7 @@ app.use("/api", (req, res, next) => {
 
 // Salud: no toca la base de datos (para que Neon pueda dormir). Con ?db=1 sí la revisa.
 app.get("/salud", async (req, res) => {
-  try { if (req.query.db) await db.pool.query("SELECT 1"); res.json({ ok: true, ia: process.env.AI_ENABLED === "true", correo: !!(process.env.BREVO_API_KEY || process.env.SMTP_URL), meta: !!process.env.META_VERIFY_TOKEN }); }
+  try { if (req.query.db) await db.pool.query("SELECT 1"); res.json({ ok: true, ia: process.env.AI_ENABLED === "true", correo: !!(process.env.BREVO_API_KEY || process.env.SMTP_URL), meta: !!process.env.META_VERIFY_TOKEN, respuestas: req.query.correo ? { webhook: !!(await db.kvGet("inbound:ok")), mx: await require("./correo").mxListo(), error: (await db.kvGet("inbound:err")) || undefined } : undefined }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 // Despertador: un servicio gratuito (cron-job.org) llama esta dirección cada 10 minutos.
@@ -48,6 +48,7 @@ app.get("/api/cron", async (req, res) => {
 });
 
 // Entradas públicas (webhooks, chat web, formulario, API)
+require("./correo").routes(app); // respuestas por correo (antes de la sesión: lo llama Brevo)
 app.use(pub.router());
 
 // Sesión
@@ -126,12 +127,15 @@ async function cerradaCache(tid) {
   cierreMem.set(tid, { v, at: Date.now(), ver: db.mem.doc.get("tenants/" + tid) }); if (cierreMem.size > 5000) cierreMem.clear();
   return v;
 }
+const PAGO_OK = /^(tenants\/[^/]+|tenants|platform\/settings|boldpagos|billing|staff|tenants\/[^/]+\/(config\/main|config\/logo|config\/connections|users|sedes)|tenants\/[^/]+\/usage\/[\w-]+)$/;
 // Regla de cobro: el día 5 sin pago (o al terminar la prueba) la empresa queda cerrada; no puede registrar ni cambiar nada (la app muestra la pantalla de cierre)
 app.use("/api", async (req, res, next) => {
   try {
-    const u = req.user; if (!u || u.staff || !u.tid || req.path === "/auth/me" || req.path === "/auth/password" || req.path.startsWith("/bold/")) return next();
+    const u = req.user; if (!u || u.staff || !u.tid || req.path === "/auth/me" || req.path === "/auth/password" || req.path.startsWith("/bold/") || req.path.startsWith("/plan/")) return next(); // cerrada: puede cambiar de plan antes de pagar
     // Cerrada: solo puede ver su pantalla de pago (datos de la empresa y sus recibos), no trabajar ni descargar
-    if (req.method === "GET" && (/^\/(doc|col)$/.test(req.path) && /^(tenants\/[^/]+|tenants|platform\/settings|boldpagos|billing|staff|tenants\/[^/]+\/(config\/main|config\/logo|config\/connections|users|sedes)|tenants\/[^/]+\/usage\/[\w-]+)$/.test(String(req.query.path || "")))) return next();
+    if (req.method === "GET" && (/^\/(doc|col)$/.test(req.path) && PAGO_OK.test(String(req.query.path || "")))) return next();
+    // Sincronización en lote: si está cerrada, el servidor solo responde las rutas de la pantalla de pago
+    if (req.method === "POST" && req.path === "/sync") { req.soloPago = await cerradaCache(u.tid) ? PAGO_OK : null; return next(); }
     // Cerrada: igual puede escribir a soporte (por ejemplo, pedir cambio de plan antes de pagar)
     if (req.method === "PUT" && req.path === "/doc" && /^tickets\/[\w-]+$/.test(String(req.body?.path || ""))) return next();
     if (await cerradaCache(u.tid)) return res.status(402).json({ error: cobro.MSG, code: "cerrada" });
@@ -249,6 +253,7 @@ app.post("/api/sa/interna", async (req, res) => {
 
 // Pagos: solo con el Bold de SkyNet Genesis (ver server/bold.js). Sin llave, sin «Ya pagué», sin desbloqueo provisional.
 bold.firmaRoute(app);
+require("./plan").routes(app);
 bold.corregirRoutes(app);
 const mant = require("./mantenimiento");
 // Generar ahora las mensualidades del mes en curso (las mismas reglas del día 1: no se factura a empresas en prueba ni pagadas por adelantado)
@@ -350,7 +355,7 @@ app.use(express.static(path.join(__dirname, "..", "docs"), { index: "index.html"
 
 const PORT = process.env.PORT || 3000;
 (async () => {
-  await db.init(); await auth.bootstrap(); await auth.bootstrapDemo().catch((e) => console.error("demo", e.message));
+  await db.init(); await auth.bootstrap(); await auth.bootstrapDemo().catch((e) => console.error("demo", e.message)); require("./correo").conectar();
   app.listen(PORT, () => console.log("Agente-IA escuchando en", PORT));
   // Revisión interna cada 5 minutos mientras el servidor esté despierto (solo usa la base si hay algo pendiente)
   setInterval(() => engine.tick().catch((e) => console.error("tick", e.message)), 5 * 60000);

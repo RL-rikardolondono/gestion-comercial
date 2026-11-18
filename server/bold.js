@@ -66,7 +66,9 @@ function routes(app) {
       if (!o) return res.json({ ok: false, pendiente: true, msg: "Bold todavía no ha confirmado el pago. En unos minutos se aplica solo." });
       const r = await mant.applyBold(o);
       if (r.revisar) return res.json({ ok: false, revisar: true, msg: "Su pago llegó y SkyNet Genesis lo está revisando. Le avisaremos por correo." });
+      if (/:paq_dif-x\d+$/.test(o.plan)) { const pd = await db.getDoc("planpend/" + (String(o.empresa).split("__")[1] || "x")); if (pd.exists && pd.data.estado === "aplicado") return res.json({ ok: true, plan: pd.data.a, planLabel: { basico: "Básico", pro: "Profesional", empresarial: "Empresarial" }[pd.data.a] }); }
       if (r.ia || (r.repetido && /:ia\d+$/.test(o.plan))) { const t = await db.getDoc("tenants/" + String(o.empresa).split("__")[0]); return res.json({ ok: true, ia: true, iaHasta: t.exists && t.data.ia ? t.data.ia.until : null }); }
+      if (r.planCambio) return res.json({ ok: true, plan: r.plan, planLabel: r.label });
       res.json({ ok: !!r.paidUntil || !!r.prueba, paidUntil: r.paidUntil || null });
     } catch (e) { res.status(500).json({ ok: false }); }
   });
@@ -101,6 +103,18 @@ function corregirRoutes(app) {
   });
 }
 // Con sesión: pide la firma del pedido al firmador central (el navegador no elige el valor)
+// Pide al firmador central la firma de un pedido y comprueba que cobre exactamente el valor que la app exige
+async function firmar(plan, empresa, valor) {
+  const origin = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://agente-ia.skynetgenesis.com";
+  const q = new URLSearchParams({ plan, empresa, meses: "1", volver: origin.replace(/\/$/, "") + "/" /* el firmador descarta un volver con "?": la vuelta se reconoce por ?bold-order-id */ });
+  let r, j;
+  try { r = await fetch(FIRMA() + "?" + q, { headers: { "User-Agent": UA, Accept: "application/json" } }); j = await r.json().catch(() => null); }
+  catch { throw Object.assign(new Error("El sistema de pagos no respondió. Intente de nuevo en unos minutos."), { status: 502 }); }
+  if (!r.ok || !j || j.error) throw Object.assign(new Error((j && j.error) || "El sistema de pagos no respondió. Intente de nuevo en unos minutos."), { status: 502 });
+  const amt = Number((j.orden || j.order || j).amount ?? (j.orden || j.order || j).valor);
+  if (amt && amt !== valor) { console.error("bold firma: precio distinto", plan, amt, valor); throw Object.assign(new Error("El precio no coincide con el sistema de pagos. Escríbanos por WhatsApp (304 437 5758) para corregirlo antes de pagar."), { status: 409 }); }
+  return j;
+}
 function firmaRoute(app) {
   app.post("/api/bold/firma", async (req, res) => {
     const u = req.user;
@@ -120,18 +134,12 @@ function firmaRoute(app) {
         const t = await db.getDoc("tenants/" + tid); if (!t.exists) return res.status(404).json({ error: "Empresa no encontrada." });
         if (t.data.interna) return res.status(400).json({ error: "Empresa interna de SkyNet Genesis: está activa sin cobros y no paga mensualidad." });
         const sedes = await mant.sedesOf(tid, t.data);
-        plan = planDe(t.data, sedes); empresa = tid; hasta = cobro.trasPago(t.data); valor = await mant.feeOf(t.data, tid);
+        // Si programó bajar de plan, lo que paga ahora (el periodo siguiente a lo pagado) ya es con el plan nuevo
+        const tp = t.data.planNext && t.data.paidOnce ? { ...t.data, plan: t.data.planNext } : t.data;
+        plan = planDe(tp, sedes); empresa = tid; hasta = cobro.trasPago(t.data); valor = await mant.feeOf(tp, tid);
       }
-      const origin = (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://agente-ia.skynetgenesis.com";
-      const q = new URLSearchParams({ plan, empresa, meses: "1", volver: origin.replace(/\/$/, "") + "/" /* el firmador descarta un volver con "?": la vuelta se reconoce por ?bold-order-id */ });
-      const r = await fetch(FIRMA() + "?" + q, { headers: { "User-Agent": UA, Accept: "application/json" } });
-      const j = await r.json().catch(() => null);
-      if (!r.ok || !j || j.error) return res.status(502).json({ error: (j && j.error) || "El sistema de pagos no respondió. Intente de nuevo en unos minutos." });
-      // El precio que cobra el firmador central debe ser el mismo que la app muestra y exige
-      const amt = Number((j.orden || j.order || j).amount ?? (j.orden || j.order || j).valor);
-      if (amt && amt !== valor) { console.error("bold firma: precio distinto", plan, amt, valor); return res.status(409).json({ error: "El precio del plan no coincide con el sistema de pagos. Escríbanos por WhatsApp (304 437 5758) para corregirlo antes de pagar." }); }
-      res.json({ ...j, plan, hasta, valor });
-    } catch (e) { res.status(502).json({ error: "El sistema de pagos no respondió. Intente de nuevo en unos minutos." }); }
+      res.json({ ...(await firmar(plan, empresa, valor)), plan, hasta, valor });
+    } catch (e) { res.status(e.status || 502).json({ error: e.status ? e.message : "El sistema de pagos no respondió. Intente de nuevo en unos minutos." }); }
   });
 }
-module.exports = { routes, firmaRoute, corregirRoutes, norm, planDe, APP };
+module.exports = { routes, firmaRoute, corregirRoutes, norm, planDe, firmar, APP };

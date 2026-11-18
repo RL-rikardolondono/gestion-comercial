@@ -71,7 +71,7 @@ async function guardedWrite(u, path, data) {
   // Cobro: «Pagado hasta», la prueba, los pagos y el número de sedes los pone SOLO el servidor (Bold y el conteo real de sedes).
   // Ni la empresa ni el Superadministrador los cambian desde la app: así nadie regala meses ni baja su precio.
   if (s[0] === "tenants" && s.length === 2 && !isSys(u) && !(u.staff && TEST_BILL())) {
-    const BILL = ["paidUntil", "trialUntil", "paidOnce", "lastPay", "credit", "sedes", "sedesPeak", "ia", "interna"]; /* ia: créditos de IA, solo los pone el pago de Bold */
+    const BILL = ["paidUntil", "trialUntil", "paidOnce", "lastPay", "credit", "sedes", "sedesPeak", "ia", "interna", "planNext", "planNextDesde", "planLog"]; /* ia: créditos de IA, solo los pone el pago de Bold */
     if (prev.exists) { for (const k of BILL) { if (k in prev.data) data[k] = prev.data[k]; else delete data[k]; } }
     else { for (const k of BILL) delete data[k]; if (u.staff) data.trialUntil = require("./cobro").addD(require("./cobro").HOY(), 14); }
   }
@@ -138,7 +138,12 @@ async function guardedWrite(u, path, data) {
   const keepD = (arrNew, arrOld) => { const old = new Map((arrOld || []).map((r) => [String(r.at), r])); for (const r of arrNew || []) { const o = old.get(String(r.at)); if (o && o.d && !r.d) r.d = o.d; } };
   if (prev.exists && ((s[2] === "invoices" && s.length === 4) || (s[0] === "billing" && s.length === 2))) keepD(data.reminders, prev.data.reminders);
   const keepBill = s[0] === "tenants" && s.length === 2 && !isSys(u) && prev.exists && !(u.staff && TEST_BILL());
-  const version = keepBill ? await db.setDocKeep(path, data, ["paidUntil", "trialUntil", "paidOnce", "lastPay", "credit", "sedes", "sedesPeak", "ia", "interna"]) : await db.setDoc(path, data);
+  // El plan y los cambios de plan los pone el servidor (pago de la diferencia, bajada programada): un guardado de la empresa no los devuelve.
+  // Si el Superadministrador cambia el plan a mano, se borra cualquier cambio programado.
+  const staffPlan = u.staff && data.plan && prev.exists && data.plan !== prev.data.plan;
+  if (staffPlan) { data.planNext = null; data.planNextDesde = null; }
+  const keepK = ["paidUntil", "trialUntil", "paidOnce", "lastPay", "credit", "sedes", "sedesPeak", "ia", "interna", "planLog", ...(staffPlan ? [] : ["planNext", "planNextDesde"]), ...(u.staff ? [] : ["plan"])];
+  const version = keepBill ? await db.setDocKeep(path, data, keepK) : await db.setDoc(path, data);
   if (s[0] === "tenants" && s[2] === "sedes") await syncSedes(s[1]);
   for (const h of hooks) { try { await h({ path, data, prev: prev.exists ? prev.data : null, user: u }); } catch (e) { console.error("hook", e.message); } }
   return version;
@@ -181,6 +186,39 @@ function router() {
     const list = await db.listCol(p);
     if (!rev) { db.bumpCol(p); rev = db.mem.col.get(p); }
     res.json({ rev, docs: filterList(req.user, p, list) });
+  });
+  // Sincronización en UNA sola petición: la app manda lo que ya tiene (versión de cada documento y revisión de cada lista)
+  // y el servidor responde solo lo que cambió. Si la lista cambió, manda solo los documentos nuevos o modificados y los borrados.
+  r.post("/sync", async (req, res) => {
+    const b = req.body || {}; const out = { docs: [], cols: [] };
+    for (const d of (Array.isArray(b.docs) ? b.docs : []).slice(0, 40)) {
+      const p = String(d.path || ""); if (!db.validPath(p, true) || (req.soloPago && !req.soloPago.test(p))) continue;
+      if (!canRead(req.user, p)) { out.docs.push({ path: p, exists: false, v: "x" }); continue; }
+      const mv = db.mem.doc.get(p); if (d.v && mv && String(d.v) === String(mv)) continue;
+      const x = await db.getDoc(p); x.v = x.exists ? x.version + ":" + x.updatedAt : "del"; db.mem.doc.set(p, x.v);
+      if (x.v === d.v) continue;
+      if (x.exists && !req.user.staff && ["billing", "tickets", "boldpagos"].includes(seg(p)[0]) && x.data.tid !== req.user.tid) { out.docs.push({ path: p, exists: false, v: "x" }); continue; }
+      out.docs.push({ path: p, ...x });
+    }
+    for (const c of (Array.isArray(b.cols) ? b.cols : []).slice(0, 40)) {
+      const p = String(c.path || ""); if (!db.validPath(p, false) || (req.soloPago && !req.soloPago.test(p))) continue;
+      if (!canRead(req.user, p)) { if (c.rev !== "0") out.cols.push({ path: p, rev: "0", docs: [] }); continue; }
+      let rev = db.mem.col.get(p); if (c.rev && rev && c.rev === rev) continue;
+      const t0 = Date.now(), since = Number(c.t) || 0, desde = since - 15000; // 15 s de margen por escrituras que tardan en confirmarse
+      // Por cambios solo si la app ya tiene la lista de este mismo arranque del servidor, es reciente (los borrados se recuerdan 2 h),
+      // no se perdió la cuenta de borrados y no es una lista compartida que se filtra por empresa
+      const compartida = !req.user.staff && ["tenants", "billing", "tickets", "boldpagos"].includes(p);
+      if (since && desde > db.mem.boot && t0 - since < db.DEL_WINDOW - 60000 && desde > (db.mem.delsCut.get(p) || 0) && !compartida) {
+        const ch = await db.listColSince(p, desde);
+        if (!rev) { db.bumpCol(p); rev = db.mem.col.get(p); }
+        out.cols.push({ path: p, rev, t: t0, delta: true, docs: filterList(req.user, p, ch), gone: db.delsSince(p, desde) });
+      } else {
+        const list = await db.listCol(p);
+        if (!rev) { db.bumpCol(p); rev = db.mem.col.get(p); }
+        out.cols.push({ path: p, rev, t: t0, docs: filterList(req.user, p, list) });
+      }
+    }
+    res.json(out);
   });
   r.post("/acquire", async (req, res) => {
     const { path, holder, ttlMs } = req.body || {};

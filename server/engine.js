@@ -17,6 +17,7 @@ const local = (ts) => { const d = new Date(ts + TZ * 3600e3); return { y: d.getU
 const dayKey = (ts) => { const l = local(ts); return `${l.y}-${l.m + 1}-${l.d}`; };
 const monthKey = (ts) => { const l = local(ts); return `${l.y}-${String(l.m + 1).padStart(2, "0")}`; };
 const cop = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
+const CORREO = require("./correo");
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 const fdt = (ts) => new Date(ts).toLocaleString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
@@ -207,11 +208,11 @@ function setStage(l, st) { if (l.stage === st) return; l.stageLog = [...(l.stage
 // las frases explícitas («no me escriban más», «no quiero recibir más mensajes») cuentan en cualquier parte del mensaje
 const OPTOUT_RE = /^(baja|stop|darme de baja|dar de baja|quiero darme de baja)$|\b(no (me )?(escriban|envien|manden|contacten) mas|no quiero (recibir )?mas mensajes|cancelar (la )?suscripcion)\b/;
 const YES_RE = /^(si|sí|acepto|autorizo|de acuerdo|ok|listo|claro)\b/;
-async function handleInbound(tid, { channel, key, phone, name, email, text, extId, sede }) {
+async function handleInbound(tid, { channel, key, phone, name, email, text, extId, sede, leadId, via }) {
   if (extId) { if (await db.kvGet("in:" + extId)) return null; await db.kvSet("in:" + extId, Date.now()); }
   const ctx = await loadTenant(tid);
   const t = Date.now(), nt = norm(text).trim(), ntw = nt.replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  let l = [...ctx.leads.values()].find((x) => (key && x.extKey === key) || (phone && ch.digits(x.phone).slice(-10) === ch.digits(phone).slice(-10) && ch.digits(phone).length >= 7));
+  let l = (leadId && ctx.leads.get(leadId)) || [...ctx.leads.values()].find((x) => (key && x.extKey === key) || (phone && ch.digits(x.phone).slice(-10) === ch.digits(phone).slice(-10) && ch.digits(phone).length >= 7));
   if (!l) { const ar = await mant.findArchived(tid, key, phone).catch(() => null); if (ar) { l = { ...ar, messages: ar.messages || [], restoredAt: t }; ctx.leads.set(l.id, l); } }
   let nuevo = false;
   if (!l) {
@@ -222,7 +223,9 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
   const yaHandoff = !!l.handoff;
   if (!l.extKey && key) l.extKey = key;
   if (name && !l.name) l.name = name;
-  l.messages.push({ from: "cliente", text, at: t, ...(extId ? { ext: extId } : {}) });
+  if (email && !l.email && /@/.test(email)) l.email = String(email).slice(0, 120);
+  l.lastVia = via || channel || l.channel; // por dónde escribió la última vez: la respuesta sale por ahí (correo, chat, redes)
+  l.messages.push({ from: "cliente", text, at: t, ...(via === "email" ? { via: "email" } : {}), ...(extId ? { ext: extId } : {}) });
   l.lastInboundAt = t;
   if (OPTOUT_RE.test(ntw)) { l.optOut = t; l.followPaused = true; l.messages.push({ from: "auto", text: `Entendido. No le enviaremos más mensajes de ${ctx.config.company}. Si necesita algo, escríbanos.`, at: t + 1 }); l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
   if (care.surveyPending(l, t) && /^[1-5]$/.test(nt)) { l.csat = Number(nt); l.csatAt = t; l.csatLog = [...(l.csatLog || []), { v: Number(nt), at: t }].slice(-12); l.awaitSurvey = false; l.messages.push({ from: "auto", text: Number(nt) >= 4 ? "¡Muchas gracias por su calificación!" : "Gracias por su sinceridad. Un responsable revisará su caso.", at: t + 1 }); if (Number(nt) <= 3) { l.handoff = true; l.awaiting = "empresa"; } else l.awaiting = "cliente"; l.lastOutboundAt = t + 1; await saveLead(ctx, l); return l; }
@@ -286,6 +289,7 @@ async function dispatchLead(tid, path, l, ctx0) {
   if (!pending.length) return;
   const ctx = ctx0 || (await loadTenant(tid));
   const st = (k) => (ctx.conns[k] || {}).status === "activo";
+  const resp = (await CORREO.responderA(tid, l.id).catch(() => null)) || replyOf(ctx); // las respuestas del cliente vuelven a la Bandeja
   for (const m of pending) {
     try {
       // La demostración pública nunca envía nada real (si no, serviría para mandar correos a cualquiera)
@@ -297,11 +301,13 @@ async function dispatchLead(tid, path, l, ctx0) {
       const late = Date.now() - (l.lastInboundAt || 0) > 24 * 3600e3;
       if (m.care && mailOk && (!["instagram", "facebook"].includes(l.channel) || late)) {
         if (!(await ch.cupo("posventa", tid))) { m.d = "espera: cupo de correo"; continue; }
-        await ch.sendEmail(l.email, `Un saludo de ${ctx.config.company}`, m.text + "\n\nSi no desea recibir más mensajes, responda este correo con la palabra BAJA.", { replyTo: replyOf(ctx), tid }); m.d = "ok: correo"; }
+        await ch.sendEmail(l.email, `Un saludo de ${ctx.config.company}`, m.text + "\n\nSi no desea recibir más mensajes, responda este correo con la palabra BAJA.", { replyTo: resp, tid }); m.d = "ok: correo"; }
+      // El cliente escribió por correo: la respuesta sale por correo (aunque haya empezado en el chat de la página)
+      else if (mailOk && l.lastVia === "email" && !["instagram", "facebook"].includes(l.lastVia)) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Re: ${ctx.config.company}`, m.text, { replyTo: resp, tid }); m.d = "ok: correo"; }
       // Chat de la página: si el cliente ya se fue (más de 30 min sin escribir) y dejó correo, el seguimiento le llega por correo
       else if (l.channel === "web" && !(mailOk && m.from === "auto" && Date.now() - (l.lastInboundAt || 0) > 30 * 60000)) m.d = "web";
       else if (l.channel === "instagram" || l.channel === "facebook") { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; }
-      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: replyOf(ctx), tid }); m.d = "ok"; }
+      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: resp, tid }); m.d = "ok"; }
       else m.d = "sin canal activo";
     } catch (e) { m.d = "error: " + String(e.message).slice(0, 120); }
     m.dAt = Date.now();

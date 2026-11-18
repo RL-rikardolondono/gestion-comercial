@@ -12,7 +12,15 @@ const pool = new Pool({
 pool.on("error", (e) => console.error("Postgres (conexión inactiva cerrada por Neon)", e.message)); // sin esto el servidor se cae
 // Revisiones en memoria: la app pregunta cada pocos segundos si algo cambió;
 // se responde desde aquí sin tocar la base de datos.
-const mem = { col: new Map(), doc: new Map(), n: 0 };
+const mem = { col: new Map(), doc: new Map(), n: 0, dels: new Map(), delsCut: new Map(), boot: Date.now() };
+// Borrados recientes por colección (2 h): así la app puede pedir solo lo que cambió y saber qué se borró
+const DEL_WINDOW = 2 * 3600e3;
+function noteDel(parent, id) {
+  const now = Date.now(); const l = (mem.dels.get(parent) || []).filter((x) => now - x.at < DEL_WINDOW); l.push({ id, at: now });
+  // Si se borran demasiados (archivo masivo), se recuerda desde cuándo se perdió la cuenta: esas apps reciben la lista completa
+  if (l.length > 2000) { const cut = l.splice(0, l.length - 2000); mem.delsCut.set(parent, cut[cut.length - 1].at); }
+  mem.dels.set(parent, l);
+}
 const bumpCol = (parent) => mem.col.set(parent, "m" + (++mem.n) + "." + Date.now());
 
 async function init() {
@@ -105,7 +113,13 @@ async function patchDoc(path, fields) {
   const r = await pool.query("UPDATE docs SET data = data || $2::jsonb, version = version + 1, updated_at = $3 WHERE path = $1 RETURNING version", [path, JSON.stringify(fields), now]);
   if (r.rows[0]) { mem.doc.set(path, r.rows[0].version + ":" + now); bumpCol(parentOf(path)); }
 }
-async function delDoc(path) { await pool.query("DELETE FROM docs WHERE path=$1", [path]); mem.doc.set(path, "del"); bumpCol(parentOf(path)); }
+async function delDoc(path) { await pool.query("DELETE FROM docs WHERE path=$1", [path]); mem.doc.set(path, "del"); noteDel(parentOf(path), idOf(path)); bumpCol(parentOf(path)); }
+// Solo los documentos que cambiaron después de «since» (sincronización por cambios)
+async function listColSince(path, since) {
+  const r = await pool.query("SELECT path, data, version, updated_at FROM docs WHERE parent=$1 AND updated_at > $2 ORDER BY path", [path, since]);
+  return r.rows.map((x) => ({ id: idOf(x.path), data: x.data, version: x.version, updatedAt: Number(x.updated_at) }));
+}
+function delsSince(path, since) { return (mem.dels.get(path) || []).filter((x) => x.at > since).map((x) => x.id); }
 async function listCol(path) {
   const r = await pool.query("SELECT path, data, version, updated_at FROM docs WHERE parent=$1 ORDER BY path", [path]);
   return r.rows.map((x) => ({ id: idOf(x.path), data: x.data, version: x.version, updatedAt: Number(x.updated_at) }));
@@ -157,4 +171,4 @@ async function findTenantBySecret(k, value) {
 async function kvGet(k) { const r = await pool.query("SELECT v FROM kv WHERE k=$1", [k]); return r.rows[0]?.v ?? null; }
 async function kvSet(k, v) { await pool.query("INSERT INTO kv(k,v) VALUES($1,$2) ON CONFLICT(k) DO UPDATE SET v=EXCLUDED.v", [k, String(v)]); }
 
-module.exports = { mem, bumpCol, pool, init, validPath, parentOf, idOf, getDoc, setDoc, setDocKeep, patchDoc, delDoc, listCol, colRev, acquire, setSecret, getSecrets, findTenantBySecret, kvGet, kvSet };
+module.exports = { mem, DEL_WINDOW, bumpCol, pool, init, validPath, parentOf, idOf, getDoc, setDoc, setDocKeep, patchDoc, delDoc, listCol, listColSince, delsSince, colRev, acquire, setSecret, getSecrets, findTenantBySecret, kvGet, kvSet };
