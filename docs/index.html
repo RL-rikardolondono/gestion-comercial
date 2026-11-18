@@ -3,7 +3,7 @@
 <meta name="gc-api" content="https://api-comercial.skynetgenesis.com">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#F4F8FB}img{max-width:100%}[hidden]{display:none!important}</style>
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icono.svg" type="image/svg+xml"><meta name="theme-color" content="#0B4F8A">
-<script src="shim.js?v=20261118"></script>
+<script src="shim.js?v=20261118b"></script>
 <script>if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});</script>
 </head><body>
 <title>Agente-IA</title>
@@ -36,7 +36,7 @@ button,input,select,textarea{font:inherit;color:inherit}
 .app{display:grid;grid-template-columns:232px 1fr;min-height:100%}
 .rail{background:var(--rail);color:var(--rail-ink);padding:20px 14px;display:flex;flex-direction:column;gap:18px;position:sticky;top:0;height:100vh;overflow:auto}
 .brand{display:flex;flex-direction:column;gap:2px;padding:0 8px}
-.brand b{font-family:var(--f-display);font-size:24px;font-weight:700;letter-spacing:-.01em}
+.brand b{font-family:var(--f-display);font-size:24px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
 .brand b i{font-style:normal;color:var(--signal)}
 .brand span{font-size:12px;color:var(--rail-dim)}
 .nav{display:flex;flex-direction:column;gap:2px}
@@ -287,23 +287,32 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
     ubicacion: ["donde", "direccion", "ubica*", "llegar", "sede*", "queda*", "barrio"],
     pago: ["pago*", "pagar", "nequi", "daviplata", "tarjeta*", "transferencia*", "efectivo", "credito", "cuota*", "financ*", "pse"],
     gracias: ["gracias", "muy amable", "perfecto", "listo"],
+    info: ["informacion", "info", "detalles", "me interesa", "mas datos", "quiero saber"],
     saludo: ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "saludos"],
   };
   const MENU_KEYS = { 1: "precio", 2: "horario", 3: "cita", 4: "human" };
 
+  const L = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ";
+  const CORTE = /\b(mi|y|con|de cel|celular|cel|correo|email|whatsapp|telefono|teléfono|numero|número|quiero|necesito|para)\b/i;
+  const capital = (s) => s.toLowerCase().replace(new RegExp("(^|\\s)([" + L + "])", "g"), (m, a, c) => a + c.toUpperCase());
+  function limpiarNombre(s) {
+    let x = String(s || "").split(/[,;:\d@(]/)[0]; const k = x.search(CORTE); if (k > 0) x = x.slice(0, k);
+    x = x.replace(/[^\s' + "" + '-]/g, (c) => (new RegExp("[" + L + "]").test(c) ? c : " ")).replace(/\s+/g, " ").trim();
+    const w = x.split(" ").filter(Boolean); return w.length >= 1 && w.length <= 4 && w.every((p) => p.length >= 2) ? capital(w.join(" ")) : "";
+  }
   function extract(text) {
     const out = {};
     const em = String(text).match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (em) out.email = em[0];
     const ph = String(text).replace(/[\s.-]/g, "").match(/(\+?57)?3\d{9}\b/); if (ph) out.phone = ph[0];
-    const nm = String(text).match(/(?:me llamo|mi nombre es|habla|le escribe)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+)?)/i)
-      || String(text).match(/\bsoy\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)/);
-    if (nm) out.name = nm[1].replace(/\b\w/g, (c) => c.toUpperCase());
+    const nm = String(text).match(new RegExp("(?:me llamo|mi nombre es|le habla|habla|le escribe)\\s+([" + L + " ]+)", "i"))
+      || String(text).match(new RegExp("(?:^|\\s)[Ss]oy\\s+([A-ZÁÉÍÓÚÑ][" + L + "]+(?:\\s+[A-ZÁÉÍÓÚÑ][" + L + "]+){0,3})"));
+    if (nm) { const n = limpiarNombre(nm[1]); if (n) out.name = n; }
     return out;
   }
   function bestFaq(c, text) {
     const w = new Set(keyWords(text)); let best = null, bs = 0;
     for (const f of c.faqs || []) {
-      if (!f.q || !f.a) continue;
+      if (!f.q || !f.a || /^(indique|liste|escriba aqu[ií])\b/i.test(String(f.a).trim())) continue; // textos de ejemplo sin llenar
       const fw = new Set(keyWords(f.q)); let s = 0; fw.forEach((x) => { if (w.has(x)) s++; });
       const score = fw.size ? s / Math.min(fw.size, Math.max(w.size, 1)) : 0;
       if (s > 0 && (score > bs || (score === bs && best && s > best.s))) { bs = score; best = { f, s, score }; }
@@ -326,7 +335,7 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
     if (ex.name && !lead.name) r.name = ex.name;
     if (ex.phone && !lead.phone) r.phone = ex.phone;
     if (ex.email && !lead.email) r.email = ex.email;
-    const menu = `Puedo ayudarle con:\n1. Servicios y precios\n2. Horario y ubicación\n3. Agendar una cita\n4. Hablar con un asesor\nResponda con el número.`;
+    const menu = `Puedo ayudarle con:\n1. Servicios y precios\n2. Horario y ubicación\n${c.agendaOn ? "3. Agendar una cita\n" : ""}4. Hablar con un asesor\nResponda con el número.`;
     const num = (nt.match(/^(?:opcion |la |el |numero )?([1-9])$/) || [])[1];
     const ordinal = { primer: 1, primera: 1, segund: 2, tercer: 3 }; let ord = null;
     for (const [k, v] of Object.entries(ordinal)) if (new RegExp("\\b" + k).test(nt)) ord = v;
@@ -342,11 +351,13 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
     }
     // 2. Respuesta al menú
     let intent = null;
-    if (num && st.menu && MENU_KEYS[num]) intent = MENU_KEYS[num];
+    if (num && st.menu && MENU_KEYS[num] && !(num === "3" && !c.agendaOn)) intent = MENU_KEYS[num];
     // 3. Nombre cuando se le pidió
-    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúñ]+( [a-záéíóúñ]+){0,2}$/i.test(String(text).trim()) && !has(nt, [].concat(...Object.values(INTENTS)))) {
-      r.name = String(text).trim().replace(/\b\w/g, (x) => x.toUpperCase()); st.askedName = false;
-      r.reply = `Mucho gusto, ${r.name.split(" ")[0]}. ${menu}`; st.menu = true; return r;
+    // Frases como «Quiero inscribirme» o «Necesito información» no son nombres
+    const NO_NOMBRE = /^(quiero|quisiera|necesito|busco|deseo|tengo|me|hola|buenas|buenos|buen|como|cuanto|cuanta|cual|que|donde|cuando|informacion|info|si|no|ok|vale|gracias|por|para|el|la|los|las|un|una|mi|yo|soy|estoy|puedo|pueden|ayuda|precio|precios|valor|horario|cita|inscribirme|matricula)$/;
+    // (también «Ana Pérez, 300 123 4567» o «Ana Pérez 300 123 4567»: el nombre es lo que va antes del número o la coma)
+    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúüñ]/i.test(String(text).trim()) && !NO_NOMBRE.test(nt.split(" ")[0]) && !has(nt, [].concat(...Object.values(INTENTS)))) {
+      const n = limpiarNombre(text); if (n) r.name = n;
     }
     // 4. Intención por palabras clave y base de conocimiento
     const faq = bestFaq(c, text);
@@ -361,13 +372,26 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
       else if (has(nt, INTENTS.pago)) intent = "pago";
       else if (faq && faq.s >= 1 && faq.score >= 0.34) intent = "faq";
       else if (has(nt, INTENTS.gracias)) intent = "gracias";
+      else if (has(nt, INTENTS.info)) intent = "info";
       else if (has(nt, INTENTS.saludo) || nt.length < 3) intent = "saludo";
     }
+    // Solo datos de contacto (nombre, celular o correo): se agradecen, no se tratan como pregunta sin respuesta
+    if ((!intent || intent === "saludo") && (r.name || r.phone || r.email)) intent = "datos";
     const item = catalogHit(c, text);
     if (item && !lead.interest) r.interest = item.n;
+    const nombre1 = String(lead.name || r.name || "").split(" ")[0];
     switch (intent) {
+      case "datos": {
+        st.askedName = false;
+        const quedo = [r.name ? "su nombre" : "", r.phone ? "su celular" : "", r.email ? "su correo" : ""].filter(Boolean);
+        r.reply = `Gracias${nombre1 ? ", " + nombre1 : ""}. Ya quedó registrado ${quedo.length > 1 ? quedo.slice(0, -1).join(", ") + " y " + quedo.slice(-1) : quedo[0] || "todo"}.`;
+        if (st.slots && st.slots.length) r.reply += `\nPara su cita tengo estos espacios:\n${st.slots.map((t, i) => `${i + 1}. ${c.fmt(t)}`).join("\n")}\nResponda con el número que prefiera.`;
+        else if (lead.handoff) r.reply += " Un asesor le escribirá" + (c.openNow ? " en breve." : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos") + ".");
+        else { r.reply += ` ${menu}`; st.menu = true; }
+        r.score += 5; break;
+      }
       case "human":
-        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText || "apenas abramos")}.`; break;
+        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}.`; break;
       case "faq":
         r.reply = faq.f.a; r.score += 10; r.stage = "interesado"; if (!lead.interest) r.interest = String(faq.f.q).replace(/[¿?]/g, "").slice(0, 60); break;
       case "cita": {
@@ -382,16 +406,16 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
       case "precio":
         if (item) r.reply = `${item.n} tiene un valor de ${cop(item.p)}${item.d ? " (" + item.d + ")" : ""}.`;
         else if ((c.catalog || []).filter((x) => x.n).length) r.reply = `Estos son nuestros precios:\n${c.catalog.filter((x) => x.n).slice(0, 8).map((x) => `• ${x.n}: ${cop(x.p)}`).join("\n")}`;
-        else if (c.services) r.reply = String(c.services).slice(0, 700);
+        else if (c.services && String(c.services).split("\n").some((x) => x.trim() && !/(\$|desde)\s*$/i.test(x.trim()))) r.reply = String(c.services).split("\n").filter((x) => !/\$\s*$/.test(x.trim()) && !/\$\s+y\b/.test(x)).join("\n").slice(0, 700); // sin las líneas de ejemplo con precio vacío
         else { r.handoff = true; r.reply = "Un asesor le compartirá los precios en breve."; }
-        if (!r.handoff) r.reply += "\n¿Desea agendar una cita? Responda 3.";
+        if (!r.handoff) r.reply += c.agendaOn ? "\n¿Desea agendar una cita? Responda 3." : "\n¿Le ayudo con algo más? Responda 4 para hablar con un asesor.";
         st.menu = true; r.score += 15; r.stage = "interesado"; break;
       case "horario": {
         const sedes = (c.sedes || []).filter((x) => x.hours).map((x) => `• ${x.name}: ${x.hours}`).join("\n");
         r.reply = (c.hoursText ? `Nuestro horario es: ${String(c.hoursText).replace(/\.$/, "")}.` : "Le comparto nuestro horario de atención.") + (sedes ? `\n${sedes}` : "");
         const addr = lineOf(c.extra, /direccion|calle|carrera|cra|avenida|av /);
         if (addr && !sedes) r.reply += `\n${addr.trim()}`;
-        r.reply += "\n¿Le ayudo con algo más? Responda 1 para precios o 3 para agendar."; st.menu = true; break;
+        r.reply += c.agendaOn ? "\n¿Le ayudo con algo más? Responda 1 para precios o 3 para agendar." : "\n¿Le ayudo con algo más? Responda 1 para precios o 4 para hablar con un asesor."; st.menu = true; break;
       }
       case "ubicacion": {
         const sedes = (c.sedes || []).filter((x) => x.address).map((x) => `• ${x.name}: ${x.address}`).join("\n");
@@ -404,15 +428,20 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
         r.reply = p ? String(p).trim() : "Un asesor le explicará los medios de pago."; if (!p) r.handoff = true;
         if (c.payLink) r.reply += `\nTambién puede pagar en línea aquí: ${c.payLink}`; break;
       }
+      case "info":
+        r.reply = `Con mucho gusto le doy la información. ${menu}`; st.menu = true; r.score += 5; break;
       case "gracias":
         r.reply = `Con mucho gusto. Si necesita algo más, aquí estamos. ${c.company}.`; st.menu = false; break;
       case "saludo":
         r.reply = `Hola, soy ${c.assistant || "el asistente"} de ${c.company}. ${menu}`; st.menu = true; break;
       default:
         r.unknown = String(text).slice(0, 200); r.handoff = true;
-        r.reply = `Esa pregunta se la responde mejor un asesor; ya le aviso para que le escriba${c.openNow ? "" : " " + (c.nextOpenText || "apenas abramos")}. Mientras tanto, ${menu.charAt(0).toLowerCase() + menu.slice(1)}`; st.menu = true;
+        r.reply = `Esa pregunta se la responde mejor un asesor; ya le aviso para que le escriba${c.openNow ? "" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}. Mientras tanto, ${menu.charAt(0).toLowerCase() + menu.slice(1)}`; st.menu = true;
     }
     if (!lead.name && !r.name && !st.askedName && intent !== "human" && !r.book) { r.reply += "\n¿Me regala su nombre, por favor?"; st.askedName = true; }
+    // Ya con el nombre, se pide un correo o celular: así el seguimiento le llega aunque no vuelva a la página
+    else if ((lead.name || r.name) && !lead.phone && !lead.email && !r.phone && !r.email && !st.askedContact && intent !== "human" && !r.book) { r.reply += "\n¿Me deja su correo o su celular para enviarle la información y hacerle seguimiento?"; st.askedContact = true; }
+    r.reply = r.reply.replace(/([ap])\. m\.\./g, "$1. m."); // «8:00 a. m..» → «8:00 a. m.»
     if (r.name || r.phone || r.email) r.score += 10;
     r.score = Math.max(0, Math.min(100, r.score));
     return r;
@@ -427,7 +456,7 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
 "use strict";
 if(window.GC_NEEDS_LOGIN) return;
 const SRV = !!window.GC_SERVER;
-const PUBLIC_BASE = window.GC_API || "https://comercial.skynetgenesis.com";
+const PUBLIC_BASE = window.GC_API || "https://api-comercial.skynetgenesis.com";
 /* ---------- constants ---------- */
 const CHANNELS = {
   web:{label:"Chat web",cls:"web"}, email:{label:"Correo",cls:"email"},
@@ -541,7 +570,7 @@ function me(){
 }
 const isProv = () => me().role==="proveedor";
 function tenant(){ return S.tenants.get(S.tid) || {id:S.tid, name:S.config.company, plan:"pro", status:"activo"}; }
-/* Regla de cobro de SkyNet Genesis (17-19 oct 2026): "Pagado hasta" a fin de mes; el día 5 sin pago se cierra (sin aviso previo ni cuenta regresiva); prueba gratis de 15 días sin renovación; solo Bold, mes a mes; primer pago: resto del mes gratis. El servidor aplica el cierre. */
+/* Regla de cobro de SkyNet Genesis: "Pagado hasta" a fin de mes; del día 1 al 4 la mensualidad está disponible; desde el día 5 aviso rojo con cuenta regresiva (5 a 1 días) y el día 10 se cierra; prueba gratis de 15 días sin renovación; solo Bold, mes a mes; primer pago: resto del mes gratis. El servidor aplica el cierre. */
 const SG_WA="https://wa.me/573044375758", SG_MAIL="contacto@skynetgenesis.com", SG_TEL="304 437 5758";
 const SG_LOGO=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-hidden="true"><rect x="4" y="4" width="192" height="192" rx="46" fill="#1E3A4C"/><g stroke="#FFFFFF" stroke-linecap="round"><polygon points="100,42 150.2,71 150.2,129 100,158 49.8,129 49.8,71" fill="none" stroke-opacity=".35" stroke-width="4"/><path d="M100 100L100 42M100 100L150.2 71M100 100L150.2 129M100 100L100 158M100 100L49.8 129M100 100L49.8 71" stroke-width="6"/></g><g fill="#FFFFFF"><circle cx="150.2" cy="71" r="10"/><circle cx="150.2" cy="129" r="10"/><circle cx="100" cy="158" r="10"/><circle cx="49.8" cy="129" r="10"/><circle cx="49.8" cy="71" r="10"/></g><circle cx="100" cy="42" r="13" fill="#E0A21A"/><circle cx="100" cy="100" r="20" fill="#E0A21A"/></svg>`;
 const sgBrand = () => `<a class="sg-brand" href="https://skynetgenesis.com" target="_blank" rel="noopener" style="text-decoration:none">${SG_LOGO}<span>Un producto de<br><b><span class="s">SKYNET</span> <span class="g">GENESIS</span></b></span></a>`;
@@ -556,17 +585,22 @@ function estadoPago(t){ const h=hoyBog(); if(t&&t.demo) return {k:"activa", t:"D
   if(enPruebaGC(t,h)){ const n=Math.round((Date.parse(ph)-Date.parse(h))/864e5)+1; return {k:"prueba", t:"En prueba: "+n+(n===1?" día":" días"), cls:"web", dias:n, hasta:ph}; }
   if(ph>=h) return {k:"activa", t:"Activa", cls:"st-ganado", hasta:ph};
   if(t&&t.trialUntil&&!t.paidOnce&&!t.paidUntil) return {k:"cerrada", t:"Cerrada por pago", cls:"hand", hasta:ph, prueba:true};
-  const cierre=addDISO(ph,5); if(h>=cierre) return {k:"cerrada", t:"Cerrada por pago", cls:"hand", hasta:ph, cierre};
-  return {k:"activa", t:"Activa · mensualidad pendiente", cls:"due", hasta:ph, pendiente:true, cierre}; }
+  const cierre=addDISO(ph,10); if(h>=cierre) return {k:"cerrada", t:"Cerrada por pago", cls:"hand", hasta:ph, cierre};
+  const quedan=Math.round((Date.parse(cierre)-Date.parse(h))/864e5), aviso=h>=addDISO(ph,5);
+  return {k:"activa", t:aviso?`Aviso: ${quedan} ${quedan===1?"día":"días"}`:"Activa · mensualidad pendiente", cls:aviso?"hand":"due", hasta:ph, pendiente:true, cierre, aviso, quedan}; }
 // Hasta dónde queda al día con un pago hecho hoy (igual que el servidor, server/cobro.js)
 function trasPagoGC(t){ const h=hoyBog(), sig=f=>{ const d=new Date(f.slice(0,7)+"-01T12:00:00Z"); d.setUTCMonth(d.getUTCMonth()+1); return d.toISOString().slice(0,10); };
   if(!t||!t.paidOnce){ const primer=enPruebaGC(t,h)?addDISO(String(t.trialUntil).slice(0,10),1):h; return Number(primer.slice(8,10))<=5?finMesISO(primer):finMesISO(sig(primer)); }
   const ph=pagadoHasta(t), fa=addDISO(h.slice(0,7)+"-01",-1); return finMesISO(addDISO(ph>fa?ph:fa,1)); }
 const fechaPago = f => new Date(f+"T12:00:00").toLocaleDateString("es-CO",{day:"numeric",month:"long",year:"numeric"});
-function avisoPagoGC(ep){ // sin cuenta regresiva: solo información y el botón de pago
-  const txt = ep.k==="prueba" ? `<b>Está en la prueba gratis de Agente-IA${ep.dias===1?": hoy es el último día":`: le quedan ${ep.dias} días`}.</b> Termina el ${fechaPago(ep.hasta)}. Si paga ahora no pierde ningún día: la primera mensualidad empieza a contar al terminar la prueba.`
-    : `<b>Su mensualidad está pendiente.</b> Según las condiciones del servicio, el ${fechaPago(ep.cierre)} se cierra el acceso si no se ha pagado.`;
-  return `<div role="status" class="note" style="margin-bottom:14px;background:var(--accent-soft);color:var(--ink);border:1px solid var(--line)"><div>${txt}</div>${isProv()?"":payBox(true)}</div>`; }
+function avisoPagoGC(ep){ // prueba: información; mensualidad: disponible (días 1 a 4) y aviso rojo con cuenta regresiva (días 5 a 9)
+  const rojo = ep.k!=="prueba" && ep.aviso;
+  const txt = ep.k==="prueba" ? `<b>Está en la prueba gratis de Agente-IA${ep.dias===1?": hoy es el último día":`: le quedan ${ep.dias} ${(ep.dias)===1?"día":"días"}`}.</b> Termina el ${fechaPago(ep.hasta)}. Si paga ahora no pierde ningún día: la primera mensualidad empieza a contar al terminar la prueba.`
+    : rojo ? `<b style="font-size:16px">⚠ ${ep.quedan===1?"Mañana":`En ${ep.quedan} ${(ep.quedan)===1?"día":"días"}`} se cierra el acceso a Agente-IA.</b><br>La mensualidad sigue sin pagar. Si no se paga antes del ${fechaPago(ep.cierre)}, ese día se cierra el acceso y SofIA deja de responderles a sus clientes. Sus datos no se pierden.`
+    : `<b>Su mensualidad de este mes ya está disponible.</b> Puede pagarla hasta el ${fechaPago(addDISO(ep.hasta,4))}. Desde el ${fechaPago(addDISO(ep.hasta,5))} verá un aviso y el ${fechaPago(ep.cierre)} se cierra el acceso si no se ha pagado.`;
+  const sty = rojo ? "background:var(--bad-soft);color:var(--bad);border:2px solid var(--bad)" : "background:var(--accent-soft);color:var(--ink);border:1px solid var(--line)";
+  const corto = ep.k==="prueba" && ep.dias>3; // en la prueba, el recuadro de pago completo solo en los 3 últimos días
+  return `<div role="${rojo?"alert":"status"}" class="note" style="margin-bottom:14px;${sty}"><div>${txt}${corto&&!isProv()&&canView("planes")&&S.view!=="planes"?` <button class="btn sm" data-view="planes">Ver planes y pagar</button>`:""}</div>${isProv()||corto?"":payBox(true)}</div>`; }
 // Barra fija de compra en la demostración (directiva: embudo de compra en todas las demos)
 function demoBar(){ const on=!!(window.GC_USER&&window.GC_USER.demo); document.body.classList.toggle("has-demo-bar",on); let el=document.getElementById("demoBar");
   if(!on){ if(el) el.remove(); return; } if(el) return;
@@ -575,7 +609,7 @@ function demoBar(){ const on=!!(window.GC_USER&&window.GC_USER.demo); document.b
   el.innerHTML=`<span><b>¿Quiere esto para su empresa?</b> 15 días gratis, sin tarjeta.</span><a class="btn primary" href="#registro" id="demoReg">Crear mi cuenta gratis</a>${canView("planes")?'<button class="btn" data-view="planes">Ver planes</button>':""}<a class="btn wa sm" href="https://wa.me/573044375758?text=${encodeURIComponent("Hola, tengo una pregunta sobre Agente-IA.")}" target="_blank" rel="noopener">Asesor</a>`;
   document.body.appendChild(el);
   const rg=document.getElementById("demoReg"); if(rg) rg.onclick=e=>{ e.preventDefault(); try{ ["gc_token","atd_me","atd_tid","atd_view"].forEach(k=>localStorage.removeItem(k)); }catch{} location.hash="registro"; location.reload(); }; }
-function cerradoPagoGC(ep){ return `<div role="alert" style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:16px"><div class="panel" style="max-width:620px;width:100%;padding:24px"><h2 style="margin:0 0 8px">El acceso está cerrado por pago</h2><p><span class="chip hand">Cerrada por pago</span></p><p>${ep.prueba?`La prueba gratis de ${esc(tenant().name||S.config.company||"su empresa")} terminó el ${fechaPago(ep.hasta)}.`:`${esc(tenant().name||S.config.company||"Su empresa")} tenía la mensualidad pagada hasta el ${fechaPago(ep.hasta)}. Según las condiciones del servicio, el día 5 sin pago se cierra el acceso.`} Mientras tanto, el asistente no responde a sus clientes.</p><p>Sus datos se conservan completos. Pague en línea aquí mismo: el acceso se abre solo en el momento en que el pago queda confirmado. No se cobran los meses que estuvo cerrado.</p>${payBox(true)}${SRV?'<div class="row" style="margin-top:12px"><button class="btn ghost" data-srv="logout">Cerrar sesión</button></div>':""}<div style="margin-top:16px">${sgBrand()}</div></div></div>`; }
+function cerradoPagoGC(ep){ return `<div role="alert" style="min-height:70vh;display:flex;align-items:center;justify-content:center;padding:16px"><div class="panel" style="max-width:620px;width:100%;padding:24px"><h2 style="margin:0 0 8px">El acceso está cerrado por pago</h2><p><span class="chip hand">Cerrada por pago</span></p><p>${ep.prueba?`La prueba gratis de ${esc(tenant().name||S.config.company||"su empresa")} terminó el ${fechaPago(ep.hasta)}.`:`${esc(tenant().name||S.config.company||"Su empresa")} tenía la mensualidad pagada hasta el ${fechaPago(ep.hasta)}. Según las condiciones del servicio, desde el día 5 sin pago se avisa y el día 10 se cierra el acceso.`} Mientras tanto, el asistente no responde a sus clientes.</p><p>Sus datos se conservan completos. Pague en línea aquí mismo: el acceso se abre solo en el momento en que el pago queda confirmado. No se cobran los meses que estuvo cerrado.</p>${payBox(true)}<div class="row" style="margin-top:8px">${SRV&&me().role==="admin"?'<button class="btn sm" data-srv="misdatos">Descargar mis datos (Excel)</button>':""}</div>${SRV?'<div class="row" style="margin-top:12px"><button class="btn ghost" data-srv="logout">Cerrar sesión</button></div>':""}<div style="margin-top:16px">${sgBrand()}</div></div></div>`; }
 const plan = () => PLANS[tenant().plan] || PLANS.pro;
 const featOn = f => plan().feats.includes(f);
 const chanOn = c => plan().channels.includes(c);
@@ -851,6 +885,9 @@ async function runEngine(manual){
 setInterval(()=>{ if(S.config.autoFollow && S.leadsLoaded && featOn("followup") && tenant().status!=="suspendido") runEngine(false); if(S.leadsLoaded) runCollect(false); runBilling(false); if(S.leadsLoaded){ runAppts(); syncTenantStats(); } render(); }, 60000);
 
 /* ---------- CSV ---------- */
+// Excel en español guarda los CSV en Windows-1252: si el archivo no es UTF-8 válido se lee así (tildes y ñ correctas)
+async function leerTexto(f){ const b=await f.arrayBuffer(); try{ return new TextDecoder("utf-8",{fatal:true}).decode(b).replace(/^\ufeff/,""); }catch{ return new TextDecoder("windows-1252").decode(b); } }
+const plural=(n,uno,varios)=>`${n} ${n===1?uno:varios}`;
 function parseCSV(txt){
   const rows=[];let row=[],f="",q=false;
   for(let i=0;i<txt.length;i++){const ch=txt[i];
@@ -866,12 +903,14 @@ function importCSV(txt){
   let n=0;
   for(const r of rows.slice(1)){ const l=newLeadAssigned({channel:"csv", name:(r[iN]||"").trim(), phone:(r[iP]||"").trim(), email:(r[iE]||"").trim(), interest:(r[iI]||"").trim(), value:Number(String(r[iV]||"").replace(/[^\d]/g,""))||0});
     if(l.name||l.phone||l.email){ writeLead(l); n++; } }
-  toast(`${n} prospectos importados`);
+  toast(n?`${plural(n,"prospecto importado","prospectos importados")}`:"No se importó ningún prospecto: revise que el archivo tenga columnas de nombre, celular o correo.");
 }
+const FMT_CO=new Intl.DateTimeFormat("es-CO",{timeZone:"America/Bogota",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+const fechaHoraCO=ms=>ms?FMT_CO.format(new Date(ms)):"";
 function toCSV(){
   const cols=["nombre","telefono","correo","canal","interes","etapa","puntaje","valor","creado","ultima_actividad"];
   const q=v=>'"'+String(v??"").replaceAll('"','""')+'"';
-  const lines=[cols.join(",")].concat(leadsArr().map(l=>[l.name,l.phone,l.email,(CHANNELS[l.channel]||{}).label,l.interest,stageLabel(l.stage),l.score,l.value,new Date(l.createdAt).toISOString(),new Date(l.updatedAt).toISOString()].map(q).join(",")));
+  const lines=[cols.join(";")].concat(leadsArr().map(l=>[l.name,l.phone,l.email,(CHANNELS[l.channel]||{}).label,l.interest,stageLabel(l.stage),l.score,l.value,fechaHoraCO(l.createdAt),fechaHoraCO(l.updatedAt)].map(q).join(";")));
   return "\ufeff"+lines.join("\n");
 }
 
@@ -922,6 +961,19 @@ function draw(){
   if(S.view==="bandeja"||S.view==="probar"){ m.querySelectorAll(".msgs").forEach(e=>{ if(!e.dataset.init){ e.scrollTop=e.scrollHeight; e.dataset.init=1; } }); }
 }
 function head(t,p,actions=""){ return `<div class="head"><div><h1>${t}</h1>${p?`<p>${p}</p>`:""}</div><div class="row">${actions}</div></div>`; }
+// Primeros pasos para una empresa nueva: lo que falta para que SofIA empiece a atender (se oculta al completarlo)
+function primerosPasos(){
+  if(isProv()||me().role!=="admin"||(window.GC_USER&&window.GC_USER.demo)) return "";
+  const c=S.config||{}, sv=String(c.services||"");
+  const kb = sv.trim().length>8 && !/:\s*\$\s*$|desde \$\s*$/m.test(sv) && String(c.hours||"").trim().length>3;
+  const pasos=[
+    [kb,"Cuéntele a SofIA de su empresa","Escriba precios, horario y preguntas frecuentes.","conocimiento","Base de conocimiento"],
+    [connOf("web").status==="activo"||connOf("form").status==="activo","Active el chat de su página o el formulario","Copie la línea del chat y pídale a quien maneja su página que la pegue una sola vez.","conexiones","Formularios y conexiones"],
+    [allLeads().length>0,"Pruebe como si fuera un cliente","Escriba una pregunta y vea lo que responde SofIA.","probar","Probar como cliente"],
+    [usersArr().length>1,"Invite a su equipo","Cree un usuario para cada asesor (usuarios ilimitados).","usuarios","Usuarios"]];
+  const n=pasos.filter(x=>x[0]).length; if(n===pasos.length) return "";
+  return `<div class="panel" style="margin-bottom:14px;border:2px solid var(--signal)"><h2 style="margin-top:0">Primeros pasos · ${n} de ${pasos.length} listos</h2><ol style="margin:0;padding-left:20px">${pasos.map(([ok,t,d,v,lb])=>`<li style="margin:8px 0">${ok?"✅ ":""}<b>${t}</b><br><span class="muted">${d}</span>${ok?"":` <button class="btn sm primary" data-view="${v}">${lb}</button>`}</li>`).join("")}</ol></div>`;
+}
 function emptyState(){
   return `<div class="empty"><b>Aún no hay prospectos</b>Escriba como cliente en <button class="btn sm" data-view="probar">Probar como cliente</button>, llene el formulario en <button class="btn sm" data-view="conexiones">Formularios y conexiones</button> o importe un archivo CSV.</div>`;
 }
@@ -943,7 +995,7 @@ function vPanel(){
   const recent=L.flatMap(l=>(l.messages||[]).slice(-3).map(m=>({...m,l}))).sort((a,b)=>b.at-a.at).slice(0,8);
   const lbl={cliente:"Cliente",bot:"Asistente IA",auto:"Seguimiento automático",agente:"Asesor"};
   return head("Panel", `Resumen de ${esc(S.config.company)}. Hora del sistema: <span class="mono">${clockStr()}</span>`, `<button class="btn primary" data-view="probar">Probar como cliente</button>`)
-  + (L.length? "" : emptyState())
+  + primerosPasos() + (L.length? "" : emptyState())
   + `<div class="kpis">
     <div class="kpi"><small>Prospectos activos</small><b>${act.length}</b><em>${wk} nuevos en 7 días</em></div>
     <div class="kpi ${pend.length?"alert":"good"}"><small>Esperan respuesta</small><b>${pend.length}</b><em>${pend.filter(slaLate).length?pend.filter(slaLate).length+" pasan de "+biz().slaMin+" min":pend.length?"Atender en la Bandeja":"Nadie sin respuesta"}</em></div>
@@ -957,7 +1009,7 @@ function vPanel(){
     <div class="kpi"><small>Valor en negociación</small><b style="font-size:24px">${cop(pipe)}</b><em>Prospectos activos con valor</em></div>
   </div>
   <div class="grid g2" style="margin-bottom:14px">${goalsPanel()}
-    <div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Resumen del día</h2><button class="btn sm" data-pact="copydigest">Copiar</button></div><div class="code" style="white-space:pre-wrap;margin-top:10px">${esc(digestText())}</div><p class="muted" style="font-size:12.5px;margin:6px 0 0">${biz().digest.on?"Se envía cada día a las 7:00 p. m. al propietario"+(biz().digest.to?" ("+esc(biz().digest.to)+")":"")+" cuando el servidor esté activo.":"Envío diario apagado."}</p></div></div>
+    <div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">Resumen del día</h2><button class="btn sm" data-pact="copydigest">Copiar</button></div><div class="code" style="white-space:pre-wrap;margin-top:10px">${esc(digestText())}</div><p class="muted" style="font-size:12.5px;margin:6px 0 0">${biz().digest.on?"Se envía cada día a las 7:00 p. m. al propietario"+(biz().digest.to?" ("+esc(biz().digest.to)+")":"")+".":"Envío diario apagado."}</p></div></div>
   <div class="grid g2">
     <div class="panel"><h2>Embudo de ventas</h2>${bars(byStage)}</div>
     <div class="panel"><h2>Origen de los prospectos</h2>${chs.length?bars(chs):'<p class="muted">Sin datos todavía.</p>'}</div>
@@ -1244,7 +1296,7 @@ function vKB(){
 /* ---------- connectors ---------- */
 const CONNECTORS = [
   {id:"web", title:"Chat para la página web", desc:"Burbuja de chat en el sitio de la empresa: WordPress, SiteGround, Wix o cualquier página.",
-    fields:[{k:"domain",l:"Dominio del sitio",ph:"www.suempresa.com"},{k:"color",l:"Color del botón",type:"color",def:"#0E6E5C"},{k:"greeting",l:"Saludo inicial",ph:"Hola, ¿en qué le podemos ayudar?"}],
+    fields:[{k:"domain",l:"Dominio del sitio",ph:"www.suempresa.com"},{k:"color",l:"Color del botón",type:"color",def:"#0B4F8A"},{k:"greeting",l:"Saludo inicial",ph:"Hola, ¿en qué le podemos ayudar?"}],
     steps:["Escriba el dominio donde irá el chat y personalice el saludo.","Copie el código y péguelo antes de la etiqueta </body> del sitio. En WordPress se usa un plugin para insertar código en el pie de página.","Abra la página y verifique que aparece la burbuja de chat."], out:"snippet"},
   {id:"form", title:"Formulario de contacto", desc:"Formulario propio con enlace directo o para pegar en la web. Cada envío entra como prospecto con respuesta inmediata.",
     fields:[{k:"notify",l:"Correo que recibe el aviso de cada solicitud",ph:"ventas@suempresa.com"},{k:"thanks",l:"Mensaje en pantalla al enviar",ph:"Gracias, en minutos le escribimos."}],
@@ -1292,9 +1344,9 @@ function wizard(c){
     return `<label class="f">${f.l}<input type="text" id="cw-${f.k}" value="${esc(v)}" placeholder="${esc(f.ph||"")}" ${edit?"":"disabled"}></label>`; };
   const snippet=`<!-- Chat de ${S.config.company} -->
 <script src="${PUBLIC_BASE}/widget.js"
-        data-empresa="${slug}" data-color="${d.color||"#0E6E5C"}" async><\/script>`;
+        data-empresa="${slug}" data-color="${d.color||"#0B4F8A"}" async><\/script>`;
   const extra = c.out==="snippet" ? `<h3 style="margin-top:14px">Código para pegar en el sitio</h3><div class="code">${esc(snippet)}</div><div class="row" style="margin-top:6px"><button class="btn sm" data-copy="snippet">Copiar código</button></div>`
-    : c.out==="api" ? `<h3 style="margin-top:14px">Dirección de entrada de prospectos</h3><div class="code">POST ${PUBLIC_BASE}/api/${slug}/prospectos
+    : c.out==="api" ? `<h3 style="margin-top:14px">Dirección de entrada de prospectos</h3><div class="code">POST ${PUBLIC_BASE}/api/v1/${slug}/prospectos
 Encabezado: Authorization: Bearer (clave que se genera al activar)
 Cuerpo JSON: {"nombre":"...","telefono":"...","correo":"...","interes":"..."}</div>`
     : c.out==="form" ? `<h3 style="margin-top:14px">Enlace del formulario</h3><div class="code">${PUBLIC_BASE}/f/${slug}</div>
@@ -1350,14 +1402,15 @@ const extraSedes = t => (PLANS[t.plan]?.feats.includes("sedes")) ? Math.max(0,(N
 const tenantFee = t => t.interna?0:planPrice(t.plan) + extraSedes(t)*(platform().pricing.sede||0);
 function vClients(){
   const T=[...S.tenants.values()].sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  const act=T.filter(t=>t.status!=="suspendido");
-  const mrr=act.reduce((s,t)=>s+tenantFee(t),0);
+  const reales=T.filter(t=>!t.demo), act=reales.filter(t=>t.status!=="suspendido"&&estadoPago(t).k!=="cerrada");
+  const pagan=act.filter(t=>t.paidOnce&&!t.interna), enPrueba=act.filter(t=>estadoPago(t).k==="prueba").length;
+  const mrr=pagan.reduce((s,t)=>s+tenantFee(t),0);
   const tk=[...S.tickets.values()].sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
   const open=tk.filter(t=>t.status!=="resuelto");
   const prio={Alta:0,Normal:1};
   return head("Mis clientes","Las empresas que le compran Agente-IA. Cada una tiene sus propios datos, usuarios, conexiones y plan.",`<button class="btn primary" data-act="newtenant">Nueva empresa cliente</button>`)
-  + `<div class="kpis"><div class="kpi"><small>Empresas activas</small><b>${act.length}</b><em>${T.length-act.length} suspendidas</em></div>
-    <div class="kpi"><small>Ingreso mensual recurrente</small><b style="font-size:24px">${cop(mrr)}</b><em>Suma de las mensualidades activas</em></div>
+  + `<div class="kpis"><div class="kpi"><small>Empresas activas</small><b>${act.length}</b><em>${enPrueba} en prueba · ${reales.length-act.length} cerradas o suspendidas (sin la demostración)</em></div>
+    <div class="kpi"><small>Ingreso mensual recurrente</small><b style="font-size:24px">${cop(mrr)}</b><em>${pagan.length} ${pagan.length===1?"empresa que ya paga":"empresas que ya pagan"} (sin pruebas, internas ni demostración)</em></div>
     <div class="kpi ${open.length?"alert":""}"><small>Solicitudes abiertas</small><b>${open.length}</b><em>${open.filter(t=>t.priority==="Alta").length} con prioridad alta</em></div>
     <div class="kpi"><small>Activaciones pendientes</small><b>${open.filter(t=>t.type==="Activación").length}</b><em>Canales por conectar</em></div></div>
   ${S.newTenant?`<div class="panel" style="margin-bottom:14px"><h2>Nueva empresa cliente</h2><div class="grid g3">
@@ -1377,7 +1430,7 @@ function vClients(){
     ${T.map(t=>`<tr><td><b>${esc(t.name)}</b>${t.id===S.tid?' <span class="chip web">Abierta</span>':""}<br><span class="muted">${esc(t.sector||"")}</span></td>
       <td><select data-tplan="${t.id}" aria-label="Plan">${PLAN_ORDER.map(k=>`<option value="${k}" ${t.plan===k?"selected":""}>${PLANS[k].label}</option>`).join("")}</select></td>
       <td class="mono">${cop(tenantFee(t))}${extraSedes(t)?`<br><span class="muted" style="font-family:var(--f-body)">incluye ${extraSedes(t)} sede${extraSedes(t)>1?"s":""} adicional${extraSedes(t)>1?"es":""}</span>`:""}</td>
-      <td>${(()=>{const d=tenantDebt(t.id);return d.bal?`<span class="mono">${cop(d.bal)}</span><br>${d.late>0?`<span class="chip hand">${d.late} días sin pagar</span>`:'<span class="chip">Por vencer</span>'}`:'<span class="chip st-ganado">Al día</span>'})()}</td>
+      <td>${(()=>{const d=tenantDebt(t.id);return d.bal?`<span class="mono">${cop(d.bal)}</span><br>${d.late>0?`<span class="chip hand">${d.late} ${(d.late)===1?"día":"días"} sin pagar</span>`:'<span class="chip">Por vencer</span>'}`:'<span class="chip st-ganado">Al día</span>'})()}</td>
       <td>${(()=>{const h=healthOf(t),st=t.stats;return `<span class="chip ${h[1]}">${h[0]}</span>${st?`<br><span class="muted" style="font-size:12px">${st.conv||0} conv. · activo ${ago(st.lastAct)}</span>`:""}`})()}</td>
       <td><b>${fechaPago(pagadoHasta(t))}</b><br>${(()=>{const ep=estadoPago(t);return `<span class="chip ${ep.cls}">${ep.t}</span>`})()}</td>
       <td><select data-tstatus="${t.id}" aria-label="Estado">${["activo","suspendido"].map(x=>`<option value="${x}" ${((t.status==="prueba"?"activo":t.status)||"activo")===x?"selected":""}>${x[0].toUpperCase()+x.slice(1)}</option>`).join("")}</select></td>
@@ -1449,8 +1502,8 @@ function vReports(){
     <div class="kpi"><small>Prospectos nuevos</small><b>${r.created.length}</b><em>Registrados en el mes</em></div>
     <div class="kpi good"><small>Ventas ganadas</small><b>${r.won.length}</b><em>${cop(r.value)} en valor</em></div>
     <div class="kpi"><small>Tiempo de primera respuesta</small><b>${avgS}</b><em>Promedio del mes</em></div>
-    <div class="kpi"><small>Respondidos por el asistente</small><b>${r.bot}</b><em>${r.agent} por asesores · ${r.auto} seguimientos</em></div>
-    ${cur&&aiOn()?`<div class="kpi"><small>Costo de IA estimado</small><b style="font-size:24px">${cop(aiCostUSD()*platform().aiRates.trm)}</b><em>${S.usage.calls||0} respuestas con IA</em></div>`:""}</div>
+    <div class="kpi"><small>Respondidos por el asistente</small><b>${r.bot}</b><em>${r.agent} por asesores · ${r.auto} ${(r.auto)===1?"seguimiento":"seguimientos"}</em></div>
+    ${cur&&aiOn()?`<div class="kpi"><small>Costo de IA estimado</small><b style="font-size:24px">${cop(aiCostUSD()*platform().aiRates.trm)}</b><em>${S.usage.calls||0} ${(S.usage.calls||0)===1?"respuesta":"respuestas"} con IA</em></div>`:""}</div>
   <div class="grid g2">
     <div class="panel"><h2>Prospectos nuevos por canal</h2>${r.byCh.length?`<div class="bars">${r.byCh.map(([k,v])=>`<div class="l"><span>${esc(k)}</span><div class="bar"><i style="width:${v/M*100}%"></i></div><span class="mono">${v}</span></div>`).join("")}</div>`:'<p class="muted">Sin prospectos nuevos en este mes.</p>'}</div>
     <div class="panel"><h2>Desempeño del equipo</h2>${r.people.length?`<div class="tablewrap"><table><thead><tr><th>Persona</th><th>Asignados</th><th>Mensajes</th><th>Ganados</th></tr></thead><tbody>${r.people.map(p=>`<tr><td><b>${esc(p.name)}</b><br><span class="muted">${p.role||""}</span></td><td class="mono">${p.assigned}</td><td class="mono">${p.sent}</td><td class="mono">${p.won}</td></tr>`).join("")}</tbody></table></div>`:'<p class="muted">Cree usuarios para ver el desempeño por persona.</p>'}</div>
@@ -1463,7 +1516,7 @@ function vReports(){
 function reportCSV(m){
   const r=reportData(m), q=v=>'"'+String(v??"").replaceAll('"','""')+'"';
   const rows=[["Informe",S.config.company,MES(m)],[],["Indicador","Valor"],["Conversaciones atendidas",r.convs.length],["Prospectos nuevos",r.created.length],["Ventas ganadas",r.won.length],["Valor ganado (COP)",r.value],["Perdidos",r.lost.length],["Respuestas de la IA",r.bot],["Mensajes de asesores",r.agent],["Seguimientos automáticos",r.auto],[],["Canal","Prospectos nuevos"],...r.byCh,[],["Persona","Asignados","Mensajes","Ganados"],...r.people.map(p=>[p.name,p.assigned,p.sent,p.won])];
-  return "﻿"+rows.map(x=>x.map(q).join(",")).join("\n");
+  return "﻿"+rows.map(x=>x.map(q).join(";")).join("\n");
 }
 async function saveFile(filename, text){
   if(/\.csv$/.test(filename)) text = String(text).replace(/\s*$/,"") + "\n\n\"Generado con Agente-IA de SkyNet Genesis · contacto@skynetgenesis.com · WhatsApp 304 437 5758\"\n";
@@ -1518,7 +1571,7 @@ function planAviso(){
   const k=S.planConf; const o=k&&ops?.opciones?.[k];
   if(o) h+=`<div class="sheet"><div class="panel" role="dialog" aria-label="Cambiar de plan"><h2>Cambiar al plan ${o.label}</h2>
     <p>${o.como==="inmediato"?`El cambio se hace de inmediato. Desde ahora su empresa tiene todo lo del plan ${o.label} y la próxima mensualidad será de ${cop(o.precio)}.`
-      :o.como==="pagar"?`Usted ya pagó este mes con el plan ${plan().label}. Para subir hoy solo paga la diferencia por los ${o.dias} días que faltan: <b>${cop(o.dif)}</b> con Bold (tarjeta, PSE, Nequi o llave Bre-B). Apenas Bold confirme el pago, su empresa queda con el plan ${o.label}. Desde el próximo mes la mensualidad será de ${cop(o.precio)}.`
+      :o.como==="pagar"?`Usted ya pagó este mes con el plan ${plan().label}. Para subir hoy solo paga la diferencia por los ${o.dias} ${(o.dias)===1?"día":"días"} que faltan: <b>${cop(o.dif)}</b> con Bold (tarjeta, PSE, Nequi o llave Bre-B). Apenas Bold confirme el pago, su empresa queda con el plan ${o.label}. Desde el próximo mes la mensualidad será de ${cop(o.precio)}.`
       :`Usted ya pagó hasta el ${fechaPago(cobroHasta())} con el plan ${plan().label}: lo conserva hasta ese día y no pierde nada de lo pagado. Desde el ${fechaPago(o.desde)} su plan será ${o.label} y pagará ${cop(o.precio)} al mes.`}</p>
     <div class="row"><button class="btn primary" data-plango="${k}">${o.como==="pagar"?`Pagar ${cop(o.dif)} y cambiar`:"Confirmar el cambio"}</button><button class="btn" data-plango="">Cancelar</button></div></div></div>`;
   return h;
@@ -1546,15 +1599,15 @@ function vPlans(){
   const p=platform().pricing, cur=tenant().plan, conv=convThisMonth(), r=platform().aiRates, u=S.usage;
   const usd=aiCostUSD(), per=u.calls?usd/u.calls:0;
   const list={
-    basico:["Chat para la página web","Formulario de contacto","Respuestas automáticas","Tablero de prospectos, clientes activos e importación CSV","Conversaciones ilimitadas","Hasta 2 usuarios"],
-    pro:["Todo lo del Básico","Instagram, Messenger y anuncios de Meta","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Conversaciones ilimitadas","Hasta 5 usuarios","Una mejora mensual incluida"],
-    empresarial:["Todo lo del Profesional",`Varias sedes: 1 incluida y ${cop(p.sede||0)} al mes por cada sede adicional`,"Webhook y API para conectar sus sistemas (Zapier, Make o el programa de su empresa)","Informes mensuales","Conversaciones ilimitadas","Hasta 50 usuarios","Dos mejoras mensuales y soporte prioritario"]
+    basico:["Chat para la página web","Formulario de contacto","Respuestas automáticas","Tablero de prospectos, clientes activos e importación CSV","Conversaciones ilimitadas","Usuarios ilimitados"],
+    pro:["Todo lo del Básico","Instagram, Messenger y formularios de anuncios de Meta (SkyNet Genesis los activa con usted)","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Conversaciones ilimitadas","Usuarios ilimitados","Una mejora mensual incluida"],
+    empresarial:["Todo lo del Profesional",`Varias sedes: 1 incluida y ${cop(p.sede||0)} al mes por cada sede adicional`,"Webhook y API para conectar sus sistemas (Zapier, Make o el programa de su empresa)","Informes mensuales","Conversaciones ilimitadas","Usuarios ilimitados","Dos mejoras mensuales y soporte prioritario"]
   };
   const prov=isProv();
   return head("Plan y consumo", prov?"Precios de venta de Agente-IA y consumo de la empresa abierta. Los precios aplican a todas sus empresas clientes.":"Su plan actual, lo que incluye y cuánto ha usado este mes.")
   + `<div class="kpis"><div class="kpi"><small>Plan actual</small><b style="font-size:24px">${plan().label}</b><em>${cop(tenantFee({...tenant(), sedes:featOn("sedes")?S.sedes.size:0}))} al mes${extraSedes({...tenant(), sedes:S.sedes.size})?` · incluye ${extraSedes({...tenant(), sedes:S.sedes.size})} sede(s) adicional(es)`:""}</em></div>
     <div class="kpi"><small>Conversaciones este mes</small><b>${conv.toLocaleString("es-CO")}</b><em>Ilimitadas en todos los planes</em></div>
-    <div class="kpi"><small>Usuarios</small><b>${usersArr().filter(x=>x.active!==false).length}/${plan().maxUsers}</b><em>Activos en el plan</em></div></div>
+    <div class="kpi"><small>Usuarios</small><b>${usersArr().filter(x=>x.active!==false).length}</b><em>Activos · ilimitados</em></div></div>
   ${planAviso()}
   <div class="plans">
     <p class="muted" style="grid-column:1/-1;margin:0">Sin costo de configuración inicial: 15 días de prueba gratis y después solo la mensualidad, mes a mes, con todos los medios de pago.</p>
@@ -1586,7 +1639,7 @@ function vUsers(){
   const U=usersArr(); const e=S.editUser;
   const counts=id=>allLeads().filter(l=>l.owner===id).length;
   const activeN=U.filter(x=>x.active!==false).length;
-  return head("Usuarios",`Equipo de ${esc(S.config.company)}. Plan ${plan().label}: hasta ${plan().maxUsers} usuarios activos (${activeN} en uso).`, `<button class="btn primary" data-act="newuser">Nuevo usuario</button>`)
+  return head("Usuarios",`Equipo de ${esc(S.config.company)}. Usuarios ilimitados en todos los planes (${activeN} activos).`, `<button class="btn primary" data-act="newuser">Nuevo usuario</button>`)
   + `<div class="grid g2" style="align-items:start">
     <div class="panel"><h2>Equipo</h2>${U.length?`<div class="tablewrap"><table><thead><tr><th>Nombre</th><th>Nivel</th>${featOn("sedes")?"<th>Sede</th>":""}<th>Prospectos</th><th>Estado</th><th></th></tr></thead><tbody>${U.map(u=>`<tr><td><b>${esc(u.name)}</b><br><span class="muted">${esc(u.email||"—")}</span></td><td><span class="chip role-${u.role}">${ROLES[u.role]?.label||u.role}</span></td>${featOn("sedes")?`<td>${esc(sedeName(u.sede)||"Todas")}</td>`:""}<td class="mono">${counts(u.id)}</td><td>${u.active===false?'<span class="chip st-perdido">Inactivo</span>':'<span class="chip st-ganado">Activo</span>'}</td><td><button class="btn sm" data-edituser="${u.id}">Editar</button></td></tr>`).join("")}</tbody></table></div>`
       :`<div class="empty"><b>Todavía no hay usuarios</b>Cree el administrador de la empresa con el botón Nuevo usuario.</div>`}
@@ -1720,7 +1773,7 @@ function vCollect(){
     <div class="panel"><h2>Antigüedad de la cartera</h2><div class="bars money">${buckets.map(([k,v],ix)=>`<div class="l"><span>${k}</span><div class="bar"><i style="width:${v/BM*100}%;${ix>=2?"background:var(--bad)":ix===1?"background:var(--warn)":""}"></i></div><span class="mono">${cop(v)}</span></div>`).join("")}</div></div>
     <div class="panel"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">Recordatorios automáticos</h2><button class="btn warm sm" data-cact="run">Enviar los pendientes ahora</button></div>
       <p class="note" style="margin-top:0">Cumple la Ley 2300 de 2023: los avisos solo salen de lunes a viernes de 7 a. m. a 7 p. m. y sábados de 8 a. m. a 3 p. m., nunca domingos ni festivos, máximo uno por día y por el canal que autorizó el cliente.</p>
-      <p class="muted" style="margin-top:0;font-size:12.5px">${collectCfg().steps.map(s=>Number(s.offset)<0?`${-s.offset} días antes`:Number(s.offset)===0?"el día del vencimiento":`${s.offset} días después`).join(" · ")}</p>
+      <p class="muted" style="margin-top:0;font-size:12.5px">${collectCfg().steps.map(s=>Number(s.offset)<0?`${-s.offset} ${(-s.offset)===1?"día":"días"} antes`:Number(s.offset)===0?"el día del vencimiento":`${s.offset} ${(s.offset)===1?"día":"días"} después`).join(" · ")}</p>
       <div class="row"><label class="toggle"><input type="checkbox" id="col-enabled" ${collectCfg().enabled?"checked":""} ${can("config")?"":"disabled"}> Enviar automáticamente</label>${can("config")?'<button class="btn sm" data-cact="settings">Configurar mensajes y medios de pago</button>':""}</div></div>
   </div>
   ${S.colSettings?collectSettings():""}
@@ -1731,7 +1784,7 @@ function vCollect(){
       <select id="invF" style="width:auto" aria-label="Estado"><option value="">Todas</option><option value="abiertas" ${S.invF==="abiertas"?"selected":""}>Abiertas</option>${Object.entries(INV_ST).map(([k,v])=>`<option value="${k}" ${S.invF===k?"selected":""}>${v[0]}</option>`).join("")}</select>
       ${SRV&&can("export")?`<button class="btn sm" data-arch="cobros" title="Cobros pagados con más de un año">Archivados (CSV)</button>`:""}<label class="btn sm" for="invCsv">Importar CSV</label><input type="file" id="invCsv" accept=".csv,text/csv" hidden>${can("export")?'<button class="btn sm" data-cact="export">Exportar</button>':""}</div></div>
     ${list.length?`<div class="tablewrap"><table><thead><tr><th>Cuenta</th><th>Cliente</th><th>Saldo</th><th>Vence</th><th>Estado</th><th>Próximo recordatorio</th><th></th></tr></thead><tbody>
-      ${list.map(i=>{const st=INV_ST[invStatus(i)], nr=nextReminder(i), ld=lateDays(i);return `<tr ${i.id===S.invSel?'style="background:var(--accent-soft)"':""}><td class="mono">${esc(i.number)}${i.demo?'<br><span class="chip demo">Ejemplo</span>':""}</td><td><b>${esc(i.client)}</b><br><span class="muted">${esc(i.concept)}</span></td><td class="mono"><b>${cop(balOf(i))}</b>${paidOf(i)?`<br><span class="muted">de ${cop(i.amount)}</span>`:""}</td><td>${fdate(i.dueAt)}${balOf(i)>0&&ld>0?`<br><span class="muted">${ld} días de mora</span>`:""}</td><td><span class="chip ${st[1]}">${st[0]}</span></td><td>${nr?(nr.at<=now()?'<span class="chip due">Pendiente de envío</span>':ago(nr.at)):i.paused&&balOf(i)>0?'<span class="muted">Pausado</span>':"—"}</td><td><button class="btn sm" data-csel="${i.id}">Abrir</button></td></tr>`}).join("")}</tbody></table></div>`
+      ${list.map(i=>{const st=INV_ST[invStatus(i)], nr=nextReminder(i), ld=lateDays(i);return `<tr ${i.id===S.invSel?'style="background:var(--accent-soft)"':""}><td class="mono">${esc(i.number)}${i.demo?'<br><span class="chip demo">Ejemplo</span>':""}</td><td><b>${esc(i.client)}</b><br><span class="muted">${esc(i.concept)}</span></td><td class="mono"><b>${cop(balOf(i))}</b>${paidOf(i)?`<br><span class="muted">de ${cop(i.amount)}</span>`:""}</td><td>${fdate(i.dueAt)}${balOf(i)>0&&ld>0?`<br><span class="muted">${ld} ${(ld)===1?"día":"días"} de mora</span>`:""}</td><td><span class="chip ${st[1]}">${st[0]}</span></td><td>${nr?(nr.at<=now()?'<span class="chip due">Pendiente de envío</span>':ago(nr.at)):i.paused&&balOf(i)>0?'<span class="muted">Pausado</span>':"—"}</td><td><button class="btn sm" data-csel="${i.id}">Abrir</button></td></tr>`}).join("")}</tbody></table></div>`
       :`<div class="empty"><b>${I.length?"No hay cuentas con ese filtro":"Aún no hay cuentas por cobrar"}</b>${I.length?"":"Cree la primera con el botón Nueva cuenta por cobrar, desde la ficha de un prospecto o importando un archivo CSV."}</div>`}</div>
     ${sel?invoiceDetail(sel):""}
   </div>`;
@@ -1768,7 +1821,7 @@ function invoiceDetail(i){
   return `<div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(i.number)} · ${esc(i.client)}</h2><button class="btn sm ghost" data-csel="">Cerrar</button></div>
     <p><span class="chip ${st[1]}">${st[0]}</span> ${i.demo?'<span class="chip demo">Ejemplo</span>':""}</p>
     <dl class="kv"><dt>Concepto</dt><dd>${esc(i.concept)}</dd><dt>Valor</dt><dd class="mono">${cop(i.amount)}</dd><dt>Abonado</dt><dd class="mono">${cop(paidOf(i))}</dd><dt>Saldo</dt><dd class="mono"><b>${cop(balOf(i))}</b></dd>
-      <dt>Emitida</dt><dd>${fdate(i.issuedAt)}</dd><dt>Vence</dt><dd>${fdate(i.dueAt)}${balOf(i)>0&&lateDays(i)>0?` · ${lateDays(i)} días de mora`:""}</dd>
+      <dt>Emitida</dt><dd>${fdate(i.issuedAt)}</dd><dt>Vence</dt><dd>${fdate(i.dueAt)}${balOf(i)>0&&lateDays(i)>0?` · ${lateDays(i)} ${(lateDays(i))===1?"día":"días"} de mora`:""}</dd>
       <dt>Contacto</dt><dd>${esc(i.phone||"—")}${i.email?" · "+esc(i.email):""}</dd><dt>Recordatorios por</dt><dd>Correo${i.email?"":" (falta el correo del cliente)"}</dd>
       ${i.sede&&featOn("sedes")?`<dt>Sede</dt><dd>${esc(sedeName(i.sede))}</dd>`:""}
       <dt>Próximo aviso</dt><dd>${nr?`Aviso ${nr.step+1} ${nr.at<=now()?"(pendiente de envío)":ago(nr.at)}`:i.paused&&balOf(i)>0?"Pausado":"—"}</dd>
@@ -1791,7 +1844,7 @@ function saveCollect(patch){ writeConfig({collect:{...collectCfg(), ...patch}});
 function invCSV(){
   const q=v=>'"'+String(v??"").replaceAll('"','""')+'"';
   const cols=["numero","cliente","telefono","correo","concepto","valor","abonado","saldo","emision","vencimiento","dias_mora","estado"];
-  return "﻿"+[cols.join(",")].concat(invArr().map(i=>[i.number,i.client,i.phone,i.email,i.concept,i.amount,paidOf(i),balOf(i),toDateInput(i.issuedAt),toDateInput(i.dueAt),Math.max(0,lateDays(i)),INV_ST[invStatus(i)][0]].map(q).join(","))).join("\n");
+  return "﻿"+[cols.join(";")].concat(invArr().map(i=>[i.number,i.client,i.phone,i.email,i.concept,i.amount,paidOf(i),balOf(i),toDateInput(i.issuedAt),toDateInput(i.dueAt),Math.max(0,lateDays(i)),INV_ST[invStatus(i)][0]].map(q).join(";"))).join("\n");
 }
 function importInvCSV(txt){
   const rows=parseCSV(txt); if(rows.length<2){ toast("El archivo no tiene filas para importar."); return; }
@@ -1852,17 +1905,22 @@ document.addEventListener("change", async e=>{
   if(t.id==="col-enabled") saveCollect({enabled:t.checked});
   if(t.id==="inv-pause"){ const i=S.invoices.get(S.invSel); if(i){ const x=structuredClone(i); x.paused=t.checked; await writeInvoice(x); toast(t.checked?"Recordatorios pausados":"Recordatorios reactivados"); } }
   if(t.id==="iv-lead"){ const l=S.leads.get(t.value); if(l){ $("#iv-client").value=l.name||""; $("#iv-phone").value=l.phone||""; $("#iv-email").value=l.email||""; if(!$("#iv-concept").value) $("#iv-concept").value=l.interest||""; if(!$("#iv-amount").value&&l.value) $("#iv-amount").value=l.value; } }
-  if(t.id==="invCsv"){ const f=t.files[0]; if(f){ const r=new FileReader(); r.onload=()=>importInvCSV(String(r.result)); r.readAsText(f); t.value=""; } }
+  if(t.id==="invCsv"){ const f=t.files[0]; if(f){ leerTexto(f).then(importInvCSV); t.value=""; } }
 });
 
 /* ---------- mensualidades: lo que el proveedor cobra a cada empresa ---------- */
 const BILL_DEFAULT = {
   dueDay:4, suspendDays:30, enabled:true,
   payInfo:"Pague en línea desde Agente-IA con todos los medios de pago (tarjeta débito o crédito, PSE, Nequi, llave Bre-B).",
-  // Igual que el servidor (server/engine.js): aviso el día 1 y aviso de cierre el día 5
+  // Igual que el servidor (server/engine.js): disponible el día 1, aviso diario del 5 al 9 y cierre el día 10
   steps:[
-    {offset:-3, text:"Hola {empresa}, ya está disponible su mensualidad de Agente-IA de {periodo} por {saldo}. Puede pagarla hasta el {vence}; si el día 5 no se ha pagado, el acceso se cierra. {pago}"},
-    {offset:1, text:"{empresa}, el acceso a Agente-IA quedó cerrado por la mensualidad pendiente de {periodo} ({saldo}). Sus datos se conservan. {pago} Se reabre en el momento en que se confirma el pago."}
+    {offset:-3, text:"Hola {empresa}, ya está disponible su mensualidad de Agente-IA de {periodo} por {saldo}. Puede pagarla hasta el {vence}. Desde el día 5 verá un aviso y, si no se ha pagado, el {cierre} se cierra el acceso. {pago}"},
+    {offset:1, text:"{empresa}, su mensualidad de Agente-IA de {periodo} ({saldo}) sigue sin pagar. Quedan 5 días: si no se paga, el {cierre} se cierra el acceso y SofIA deja de responderles a sus clientes. {pago}"},
+    {offset:2, text:"{empresa}, quedan 4 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}"},
+    {offset:3, text:"{empresa}, quedan 3 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}"},
+    {offset:4, text:"{empresa}, quedan 2 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}"},
+    {offset:5, text:"{empresa}, mañana ({cierre}) se cierra el acceso a Agente-IA si no se paga la mensualidad de {periodo} ({saldo}). {pago}"},
+    {offset:6, text:"{empresa}, el acceso a Agente-IA quedó cerrado por la mensualidad pendiente de {periodo} ({saldo}). Sus datos se conservan. {pago} Se reabre en el momento en que se confirma el pago."}
   ]
 };
 const EMITTER_DEFAULT = {name:"", doc:"", addr:"", city:"Santa Marta", phone:"", email:"", regime:"No responsable de IVA", resol:"", prefix:""};
@@ -1909,7 +1967,7 @@ const billArr = () => [...S.billing.values()].sort((a,b)=>(b.dueAt||0)-(a.dueAt|
 function fillBill(t, b){
   if(!b.period) t=String(t||"").replace(/mensualidad de Agente-IA de \{periodo\}|mensualidad de \{periodo\}/g, "pago de {periodo}");
   return String(t||"").replaceAll("{empresa}", b.tenantName||"").replaceAll("{periodo}", b.period?MES(b.period):(b.concept||""))
-    .replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{numero}", b.number||"")
+    .replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{cierre}", fdate(b.dueAt+6*864e5)).replaceAll("{numero}", b.number||"")
     .replaceAll("{pago}", billCfg().payInfo||"").replace(/\s+/g," ").trim();
 }
 function nextBillReminder(b){
@@ -1970,7 +2028,7 @@ function vBilling(){
   const activeT=[...S.tenants.values()].filter(t=>t.status==="activo");
   const missing=activeT.filter(t=>!B.some(b=>b.tid===t.id&&b.period===per&&b.kind==="mensualidad")).length;
   let list=S.billF==="abiertas"?B.filter(b=>balOf(b)>0):S.billF==="vencidas"?late:inP;
-  return head("Mensualidades","Lo que cada empresa cliente le paga a SkyNet Genesis: la mensualidad y las sedes adicionales, mes a mes y solo en línea. Las mensualidades se generan solas el día 1 de cada mes; el día 5 sin pago la empresa se cierra sola.",
+  return head("Mensualidades","Lo que cada empresa cliente le paga a SkyNet Genesis: la mensualidad y las sedes adicionales, mes a mes y solo en línea. Las mensualidades se generan solas el día 1 de cada mes; desde el día 5 sin pago la empresa ve un aviso rojo y el día 10 se cierra sola.",
     `<select id="billPer" style="width:auto" aria-label="Mes">${months.map(m=>`<option value="${m}" ${m===per?"selected":""}>${MES(m)}</option>`).join("")}</select><button class="btn primary" data-bact="gen">Generar mensualidades de ${MES(per)}${missing?` (${missing})`:""}</button>`)
   + `<div class="kpis">
     <div class="kpi"><small>Facturado en ${MES(per)}</small><b style="font-size:24px">${cop(billed)}</b><em>${inP.length} cobros</em></div>
@@ -1980,7 +2038,7 @@ function vBilling(){
     <div class="kpi ${late.length?"alert":"good"}"><small>Sin pagar</small><b style="font-size:24px">${cop(late.reduce((s,b)=>s+balOf(b),0))}</b><em>${lateT.length} empresa${lateT.length===1?"":"s"}</em></div>
   </div>
   ${boldPanel()}
-  ${toSuspend.length?`<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)"><b>${toSuspend.length} empresa${toSuspend.length>1?"s":""} con ${sd} días o más de mora:</b> ${toSuspend.map(tid=>esc(S.tenants.get(tid)?.name)).join(", ")}. <button class="btn sm" data-bsuspend="${toSuspend.join(",")}">Suspender servicio</button></div>`:""}
+  ${toSuspend.length?`<div class="note" style="margin-bottom:14px;background:var(--bad-soft);color:var(--bad)"><b>${toSuspend.length} empresa${toSuspend.length>1?"s":""} con ${sd} ${(sd)===1?"día":"días"} o más de mora:</b> ${toSuspend.map(tid=>esc(S.tenants.get(tid)?.name)).join(", ")}. <button class="btn sm" data-bsuspend="${toSuspend.join(",")}">Suspender servicio</button></div>`:""}
   ${missing&&per===cur?`<div class="note" style="margin-bottom:14px">${missing} empresa${missing>1?"s":""} activa${missing>1?"s":""} sin mensualidad generada para ${MES(per)}. Las empresas en prueba o suspendidas no se facturan.</div>`:""}
   <div class="grid ${sel?"split":""}" style="align-items:start">
   <div class="panel"><div class="row" style="justify-content:space-between;margin-bottom:10px"><h2 style="margin:0">Cobros a empresas</h2>
@@ -1988,15 +2046,15 @@ function vBilling(){
     <button class="btn warm sm" data-bact="run">Enviar recordatorios pendientes</button><button class="btn sm" data-bact="settings">Configurar</button><button class="btn sm" data-bact="export">Exportar</button></div></div>
     ${S.billSettings?billSettings():""}
     ${list.length?`<div class="tablewrap"><table><thead><tr><th>Cobro</th><th>Empresa</th><th>Concepto</th><th>Saldo</th><th>Vence</th><th>Estado</th><th>${billCfg().mode==="dian"?"Factura":"Cuenta de cobro"}</th><th></th></tr></thead><tbody>
-      ${list.map(b=>{const st=INV_ST[invStatus(b)];return `<tr ${b.id===S.billSel?'style="background:var(--accent-soft)"':""}><td class="mono">${esc(b.number)}</td><td><b>${esc(b.tenantName)}</b></td><td>${esc(b.concept)}${b.period?`<br><span class="muted">${MES(b.period)}</span>`:""}</td><td class="mono"><b>${cop(balOf(b))}</b>${paidOf(b)?`<br><span class="muted">de ${cop(b.amount)}</span>`:""}</td><td>${fdate(b.dueAt)}${balOf(b)>0&&lateDays(b)>0?`<br><span class="muted">${lateDays(b)} días sin pagar</span>`:""}</td><td><span class="chip ${st[1]}">${st[0]}</span></td><td>${feDone(b)?`<span class="mono">${esc(b.feNumber||b.ccNumber)}</span>`:'<span class="chip due">Pendiente</span>'}</td><td><button class="btn sm" data-bsel="${b.id}">Abrir</button></td></tr>`}).join("")}</tbody></table></div>`
+      ${list.map(b=>{const st=INV_ST[invStatus(b)];return `<tr ${b.id===S.billSel?'style="background:var(--accent-soft)"':""}><td class="mono">${esc(b.number)}</td><td><b>${esc(b.tenantName)}</b></td><td>${esc(b.concept)}${b.period?`<br><span class="muted">${MES(b.period)}</span>`:""}</td><td class="mono"><b>${cop(balOf(b))}</b>${paidOf(b)?`<br><span class="muted">de ${cop(b.amount)}</span>`:""}</td><td>${fdate(b.dueAt)}${balOf(b)>0&&lateDays(b)>0?`<br><span class="muted">${lateDays(b)} ${(lateDays(b))===1?"día":"días"} sin pagar</span>`:""}</td><td><span class="chip ${st[1]}">${st[0]}</span></td><td>${feDone(b)?`<span class="mono">${esc(b.feNumber||b.ccNumber)}</span>`:'<span class="chip due">Pendiente</span>'}</td><td><button class="btn sm" data-bsel="${b.id}">Abrir</button></td></tr>`}).join("")}</tbody></table></div>`
       :`<div class="empty"><b>No hay cobros${S.billF?" con ese filtro":` en ${MES(per)}`}</b>Use el botón Generar mensualidades para crear el cobro de cada empresa activa.</div>`}
   </div>
   ${sel?billDetail(sel):""}</div>`;
 }
 function billSettings(){
   const c=billCfg();
-  return `<div class="note" style="margin-bottom:12px"><p style="margin-top:0"><b>Regla de cobro (igual en todas las apps de SkyNet Genesis):</b> la mensualidad se paga hasta el día 4; el día 5 sin pago la empresa se cierra sola, sin aviso previo ni multa, y se reabre en el momento en que paga en línea (desde el mes en curso, sin cobrar los meses que estuvo cerrada). Las empresas nuevas tienen 15 días de prueba gratis sin renovación. Se paga solo con Bold, mes a mes.</p>
-    <p class="muted" style="font-size:12.5px">Avisos por correo y en la campana: uno cuando la mensualidad queda disponible (día 1) y otro si el acceso se cierra (día 5).</p>
+  return `<div class="note" style="margin-bottom:12px"><p style="margin-top:0"><b>Regla de cobro (igual en todas las apps de SkyNet Genesis):</b> la mensualidad se paga hasta el día 4; desde el día 5 sin pago la empresa ve un aviso rojo con cuenta regresiva y el día 10 se cierra sola, sin multa, y se reabre en el momento en que paga en línea (desde el mes en curso, sin cobrar los meses que estuvo cerrada). Las empresas nuevas tienen 15 días de prueba gratis sin renovación. Se paga solo con Bold, mes a mes.</p>
+    <p class="muted" style="font-size:12.5px">Avisos por correo y en la campana: cuando la mensualidad queda disponible (día 1), cada día del 5 al 9 (quedan 5, 4, 3, 2 y 1 días) y cuando el acceso se cierra (día 10).</p>
     <h3 style="margin-top:12px">Cómo factura usted</h3>
     <label class="f">Documento que entrega a cada empresa<select id="bc-mode"><option value="dian" ${c.mode==="dian"?"selected":""}>Factura electrónica con la solución gratuita de la DIAN</option><option value="cc" ${c.mode==="cc"?"selected":""}>Cuenta de cobro (persona natural no obligada a facturar)</option></select></label>
     <div class="grid g2" style="margin-top:8px">
@@ -2015,7 +2073,7 @@ function billDetail(b){
   const st=INV_ST[invStatus(b)], nr=nextBillReminder(b);
   return `<div class="panel"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(b.number)} · ${esc(b.tenantName)}</h2><button class="btn sm ghost" data-bsel="">Cerrar</button></div>
     <p><span class="chip ${st[1]}">${st[0]}</span></p>
-    <dl class="kv"><dt>Concepto</dt><dd>${esc(b.concept)}</dd>${b.period?`<dt>Periodo</dt><dd>${MES(b.period)}</dd>`:""}<dt>Valor</dt><dd class="mono">${cop(b.amount)}</dd><dt>Pagado</dt><dd class="mono">${cop(paidOf(b))}</dd><dt>Saldo</dt><dd class="mono"><b>${cop(balOf(b))}</b></dd><dt>Vence</dt><dd>${fdate(b.dueAt)}${balOf(b)>0&&lateDays(b)>0?` · ${lateDays(b)} días sin pagar`:""}</dd><dt>Próximo aviso</dt><dd>${nr?`Aviso ${nr.step+1} ${nr.at<=now()?"(pendiente)":ago(nr.at)}`:"—"}</dd>
+    <dl class="kv"><dt>Concepto</dt><dd>${esc(b.concept)}</dd>${b.period?`<dt>Periodo</dt><dd>${MES(b.period)}</dd>`:""}<dt>Valor</dt><dd class="mono">${cop(b.amount)}</dd><dt>Pagado</dt><dd class="mono">${cop(paidOf(b))}</dd><dt>Saldo</dt><dd class="mono"><b>${cop(balOf(b))}</b></dd><dt>Vence</dt><dd>${fdate(b.dueAt)}${balOf(b)>0&&lateDays(b)>0?` · ${lateDays(b)} ${(lateDays(b))===1?"día":"días"} sin pagar`:""}</dd><dt>Próximo aviso</dt><dd>${nr?`Aviso ${nr.step+1} ${nr.at<=now()?"(pendiente)":ago(nr.at)}`:"—"}</dd>
     ${b.agreement?`<dt>Acuerdo</dt><dd>${esc(b.agreement.note||"")}</dd>`:""}</dl>
     <div class="row" style="margin-top:8px"><button class="btn sm" data-enter="${b.tid}">Abrir la empresa</button></div>
     ${billCfg().mode==="dian"?`<h3 style="margin-top:16px">Factura electrónica DIAN</h3>
@@ -2041,7 +2099,7 @@ function tenantStatement(){
   const mine=billArr().filter(b=>b.tid===S.tid);
   const d=tenantDebt(S.tid);
   return `${isProv()?"":`<div style="margin-bottom:14px">${payBox(false)}</div>`}<div class="panel"><h2>Estado de cuenta con Agente-IA</h2>
-${d.bal?`<p class="note" style="${d.late>0?"background:var(--bad-soft);color:var(--bad)":""}">Saldo pendiente: <b>${cop(d.bal)}</b>${d.late>0?` · ${d.late} días sin pagar`:""}. ${esc(billCfg().payInfo)}</p>`:'<p class="muted">Está al día. Gracias.</p>'}
+${d.bal?`<p class="note" style="${d.late>0?"background:var(--bad-soft);color:var(--bad)":""}">Saldo pendiente: <b>${cop(d.bal)}</b>${d.late>0?` · ${d.late} ${(d.late)===1?"día":"días"} sin pagar`:""}. ${esc(billCfg().payInfo)}</p>`:'<p class="muted">Está al día. Gracias.</p>'}
     ${mine.length?`<div class="tablewrap"><table><thead><tr><th>Cobro</th><th>Concepto</th><th>Valor</th><th>Vence</th><th>Estado</th></tr></thead><tbody>${mine.map(b=>{const st=INV_ST[invStatus(b)];return `<tr><td class="mono">${esc(b.number)}${b.feNumber?`<br><span class="muted">Factura ${esc(b.feNumber)}</span>`:b.ccNumber?`<br><span class="muted">Cuenta de cobro ${esc(b.ccNumber)}</span>`:""}</td><td>${esc(b.concept)}${b.period?`<br><span class="muted">${MES(b.period)}</span>`:""}</td><td class="mono">${cop(b.amount)}${paidOf(b)&&balOf(b)?`<br><span class="muted">saldo ${cop(balOf(b))}</span>`:""}</td><td>${fdate(b.dueAt)}</td><td><span class="chip ${st[1]}">${st[0]}</span></td></tr>`}).join("")}</tbody></table></div>`:'<p class="muted">Aún no hay cobros registrados.</p>'}</div>`;
 }
 /* ---------- pago por llave: «Ya pagué» con comprobante; el proveedor confirma o rechaza ---------- */
@@ -2058,7 +2116,7 @@ function payBox(compact){
     ${compact?"":"<h2>Pagar la mensualidad</h2>"}
     <dl class="kv" style="margin:0"><dt>Plan</dt><dd>${esc((PLANS[t.plan]||plan()).label)}${extraSedes(t)?` + ${extraSedes(t)} sede${extraSedes(t)>1?"s":""} adicional${extraSedes(t)>1?"es":""}`:""}</dd><dt>Valor del mes</dt><dd class="mono"><b>${cop(val)}</b></dd><dt>Con este pago queda al día hasta el</dt><dd><b>${fechaPago(hasta)}</b></dd></dl>
     ${!t.paidOnce?`<p class="muted" style="font-size:12.5px;margin:6px 0 0">Primer pago: ${enPruebaGC(t)?"empieza a contar al terminar la prueba, así que no pierde ningún día de prueba.":"lo que queda de este mes va por cuenta de la casa."}</p>`:""}
-    <div class="row" style="margin-top:10px">${puede?`<button class="btn primary" data-bold="pagar">Pagar en línea</button>`:`<span class="muted" style="font-size:13px">${demo?"En la demostración no se hacen pagos.":!SRV?"El pago en línea funciona en la versión publicada.":"El administrador de su empresa puede pagar desde esta pantalla."}</span>`}<a class="btn wa" href="${SG_WA}" target="_blank" rel="noopener">Soporte por WhatsApp</a></div>
+    <div class="row" style="margin-top:10px">${puede?`<button class="btn primary" data-bold="pagar">Pagar en línea</button>`:`<span class="muted" style="font-size:13px">${demo?"En la demostración no se hacen pagos.":!SRV?"El pago en línea funciona en la versión publicada.":"El administrador de su empresa puede pagar desde esta pantalla."}</span>`}<a class="btn wa" href="${SG_WA}" target="_blank" rel="noopener">Soporte por WhatsApp ${SG_TEL}</a></div>
     <p class="muted" style="font-size:12.5px;margin:6px 0 0">Todos los medios de pago: tarjeta débito o crédito, PSE, Nequi y llave Bre-B. Se paga mes a mes, sin multas ni intereses.</p>
     ${S.boldMsg?`<div class="note" style="margin-top:10px">${esc(S.boldMsg)}</div>`:""}
     ${last&&Date.now()-(last.at||0)<7*DAY?`<div class="note" style="margin-top:10px;background:var(--ok-soft);color:var(--ok)"><b>Pago recibido.</b> ${cop(last.valor)} el ${fdate(last.at)}. Quedó al día hasta el ${fechaPago(last.paidUntil)}. <button class="btn sm" data-bold="recibo" data-id="${esc(last.pago_id)}">Recibo en PDF</button></div>`:""}</div>`;
@@ -2140,7 +2198,7 @@ document.addEventListener("click", async e=>{
     if(a==="cancel"){ S.ctaAsk=null; return render(); }
     if(a==="csv"){ const q=v=>'"'+String(v??"").replaceAll('"','""')+'"'; const fd=ts=>ts?new Date(ts).toISOString().slice(0,16).replace("T"," "):"";
       const rows=[["empresa","persona","correo","perfil","contrasena_creada","ultimo_ingreso","estado","motivo_bloqueo"],...(S.cuentas||[]).map(c=>[c.empresa,c.nombre,c.email,c.perfil,c.clave?"si":"no",fd(c.ultimo),c.bloqueo?"bloqueada":c.activo?"activa":"desactivada",c.bloqueo?c.bloqueo.motivo:""])];
-      return saveFile("cuentas-agente-ia.csv","﻿"+rows.map(r=>r.map(q).join(",")).join("\n")); }
+      return saveFile("cuentas-agente-ia.csv","﻿"+rows.map(r=>r.map(q).join(";")).join("\n")); }
     if(a==="enlace"){ b.disabled=true; const j=await window.GC_req("POST","/api/sa/cuentas/enlace",{id}); toast(j.msg||"Enlace enviado."); b.disabled=false; return; }
     if(a==="bloquear"){ const m=(document.getElementById("cta-mot")||{}).value||""; if(!m.trim()) return toast("Escriba el motivo del bloqueo."); await window.GC_req("POST","/api/sa/cuentas/bloquear",{id,bloquear:true,motivo:m.trim()}); toast("Cuenta bloqueada."); return recargar(); }
     if(a==="desbloquear"){ await window.GC_req("POST","/api/sa/cuentas/bloquear",{id,bloquear:false}); toast("Cuenta desbloqueada."); return recargar(); }
@@ -2234,7 +2292,7 @@ function docFooter(doc){
 async function savePDF(doc, filename){ const blob=doc.output("blob"); if(S.downloads){ try{ await S.downloads.save({filename, data:blob}); }catch(err){ if(err&&err.code!=="cancelled"&&err.code!=="declined") toast("No se pudo descargar el PDF."); } } else toast("La descarga no está disponible en esta vista."); }
 function billCSV(){
   const q=v=>'"'+String(v??"").replaceAll('"','""')+'"';
-  return "﻿"+[["numero","empresa","razon_social","nit","correo_facturacion","concepto","periodo","valor","pagado","saldo","vence","dias_mora","estado","factura_electronica"].join(",")].concat(billArr().map(b=>{const t=S.tenants.get(b.tid)||{};return [b.number,b.tenantName,t.razon||b.tenantName,t.nit||"",t.feMail||"",b.concept,b.period,b.amount,paidOf(b),balOf(b),toDateInput(b.dueAt),Math.max(0,lateDays(b)),INV_ST[invStatus(b)][0],b.feNumber||""].map(q).join(",")})).join("\n");
+  return "﻿"+[["numero","empresa","razon_social","nit","correo_facturacion","concepto","periodo","valor","pagado","saldo","vence","dias_mora","estado","factura_electronica"].join(";")].concat(billArr().map(b=>{const t=S.tenants.get(b.tid)||{};return [b.number,b.tenantName,t.razon||b.tenantName,t.nit||"",t.feMail||"",b.concept,b.period,b.amount,paidOf(b),balOf(b),toDateInput(b.dueAt),Math.max(0,lateDays(b)),INV_ST[invStatus(b)][0],b.feNumber||""].map(q).join(";")})).join("\n");
 }
 document.addEventListener("click", async e=>{
   const t=e.target.closest("[data-bact],[data-bsel],[data-bsuspend]"); if(!t||!isProv()) return;
@@ -2416,14 +2474,16 @@ async function toggleTask(leadId, tid){ const l=S.leads.get(leadId); if(!l) retu
 
 /* ---------- plantillas por sector ---------- */
 const SECTOR_TPL = {
-  "Salud / IPS":{assistant:"Asistente de citas", services:"- Consulta de medicina general: $\n- Consulta especializada: $\n- Exámenes de laboratorio: $\n- Medicina laboral y exámenes ocupacionales: $", faqs:[{q:"¿Atienden por EPS?",a:"Indique aquí si atiende particular, EPS o prepagadas."},{q:"¿Necesito orden médica?",a:"Indique qué servicios requieren orden médica."},{q:"¿Cómo me preparo para los exámenes?",a:"Indique ayuno y recomendaciones."}], agendaServices:["Medicina general","Especialista","Laboratorio","Examen ocupacional"]},
-  "Odontología":{assistant:"Asistente dental", services:"- Valoración: $\n- Limpieza: $\n- Resinas: desde $\n- Ortodoncia: cuota inicial $ y controles $", faqs:[{q:"¿Cuánto cuesta una limpieza?",a:"Escriba aquí el precio de la limpieza."},{q:"¿Financian tratamientos?",a:"Indique si hay cuotas o financiación."}], agendaServices:["Valoración","Limpieza","Control de ortodoncia"]},
-  "Colegio / educación":{assistant:"Asistente de admisiones", services:"- Matrícula: $\n- Pensión mensual: $\n- Transporte: $\n- Uniformes: $", faqs:[{q:"¿Hay cupos?",a:"Indique los grados con cupo disponible."},{q:"¿Qué documentos piden para matricular?",a:"Liste los documentos requeridos."},{q:"¿Cuál es el horario?",a:"Indique la jornada escolar."}], agendaServices:["Visita al colegio","Entrevista de admisión"]},
-  "Instituto técnico / cursos":{assistant:"Asesor académico", services:"- Programa técnico: valor del semestre $\n- Cursos cortos: $\n- Diplomados: $", faqs:[{q:"¿Cuánto dura el programa?",a:"Indique la duración."},{q:"¿Es virtual o presencial?",a:"Indique la modalidad."},{q:"¿Cuándo inician las clases?",a:"Indique la próxima fecha de inicio."}], agendaServices:["Asesoría de inscripción"]},
-  "Comercio / ferretería":{assistant:"Asistente de ventas", services:"- Producto: $\n- Domicilio: desde $", faqs:[{q:"¿Hacen domicilios?",a:"Indique zonas y valor del domicilio."},{q:"¿Qué medios de pago reciben?",a:"Indique los medios de pago."}], agendaServices:[]},
-  "Inmobiliaria":{assistant:"Asesor inmobiliario", services:"- Arriendos: \n- Ventas: \n- Avalúos: $", faqs:[{q:"¿Qué requisitos piden para arrendar?",a:"Liste los requisitos y codeudores."}], agendaServices:["Visita a inmueble"]},
-  "Restaurante":{assistant:"Asistente de reservas", services:"- Menú del día: $\n- Domicilios: ", faqs:[{q:"¿Tienen reservas?",a:"Indique cómo reservar."},{q:"¿Hacen domicilios?",a:"Indique zonas y horario."}], agendaServices:["Reserva de mesa"]},
-  "Taller / servicios técnicos":{assistant:"Asistente de servicio", services:"- Diagnóstico: $\n- Mantenimiento: $", faqs:[{q:"¿Cuánto se demora el servicio?",a:"Indique tiempos promedio."}], agendaServices:["Diagnóstico","Mantenimiento"]}
+  "Salud / IPS":{assistant:"SofIA", services:"- Consulta de medicina general: $\n- Consulta especializada: $\n- Exámenes de laboratorio: $\n- Medicina laboral y exámenes ocupacionales: $", faqs:[{q:"¿Atienden por EPS?",a:"Indique aquí si atiende particular, EPS o prepagadas."},{q:"¿Necesito orden médica?",a:"Indique qué servicios requieren orden médica."},{q:"¿Cómo me preparo para los exámenes?",a:"Indique ayuno y recomendaciones."}], agendaServices:["Medicina general","Especialista","Laboratorio","Examen ocupacional"]},
+  "Odontología":{assistant:"SofIA", services:"- Valoración: $\n- Limpieza: $\n- Resinas: desde $\n- Ortodoncia: cuota inicial $ y controles $", faqs:[{q:"¿Cuánto cuesta una limpieza?",a:"Escriba aquí el precio de la limpieza."},{q:"¿Financian tratamientos?",a:"Indique si hay cuotas o financiación."}], agendaServices:["Valoración","Limpieza","Control de ortodoncia"]},
+  "Colegio / educación":{assistant:"SofIA", services:"- Matrícula: $\n- Pensión mensual: $\n- Transporte: $\n- Uniformes: $", faqs:[{q:"¿Hay cupos?",a:"Indique los grados con cupo disponible."},{q:"¿Qué documentos piden para matricular?",a:"Liste los documentos requeridos."},{q:"¿Cuál es el horario?",a:"Indique la jornada escolar."}], agendaServices:["Visita al colegio","Entrevista de admisión"]},
+  "Instituto técnico / cursos":{assistant:"SofIA", services:"- Programa técnico: valor del semestre $\n- Cursos cortos: $\n- Diplomados: $", faqs:[{q:"¿Cuánto dura el programa?",a:"Indique la duración."},{q:"¿Es virtual o presencial?",a:"Indique la modalidad."},{q:"¿Cuándo inician las clases?",a:"Indique la próxima fecha de inicio."}], agendaServices:["Asesoría de inscripción"]},
+  "Tienda / almacén":{assistant:"SofIA", services:"- Producto: $\n- Envío o domicilio: desde $", faqs:[{q:"¿Hacen envíos?",a:"Indique ciudades, valor y tiempo de entrega."},{q:"¿Qué medios de pago reciben?",a:"Indique los medios de pago."},{q:"¿Tienen garantía?",a:"Indique la garantía y cómo se hace un cambio."}], agendaServices:[]},
+  "Comercio / ferretería":{assistant:"SofIA", services:"- Producto: $\n- Domicilio: desde $", faqs:[{q:"¿Hacen domicilios?",a:"Indique zonas y valor del domicilio."},{q:"¿Qué medios de pago reciben?",a:"Indique los medios de pago."}], agendaServices:[]},
+  "Concesionario / vehículos":{assistant:"SofIA", services:"- Vehículo nuevo (modelo): desde $\n- Vehículo usado: desde $\n- Mantenimiento: desde $", faqs:[{q:"¿Tienen financiación?",a:"Indique entidades, cuota inicial y plazos."},{q:"¿Reciben mi carro como parte de pago?",a:"Indique si reciben usados y cómo se avalúan."},{q:"¿Puedo hacer una prueba de manejo?",a:"Indique días y requisitos (licencia vigente)."}], agendaServices:["Prueba de manejo","Asesoría de compra","Cita de taller"]},
+  "Inmobiliaria":{assistant:"SofIA", services:"- Arriendos: \n- Ventas: \n- Avalúos: $", faqs:[{q:"¿Qué requisitos piden para arrendar?",a:"Liste los requisitos y codeudores."}], agendaServices:["Visita a inmueble"]},
+  "Restaurante":{assistant:"SofIA", services:"- Menú del día: $\n- Domicilios: ", faqs:[{q:"¿Tienen reservas?",a:"Indique cómo reservar."},{q:"¿Hacen domicilios?",a:"Indique zonas y horario."}], agendaServices:["Reserva de mesa"]},
+  "Taller / servicios técnicos":{assistant:"SofIA", services:"- Diagnóstico: $\n- Mantenimiento: $", faqs:[{q:"¿Cuánto se demora el servicio?",a:"Indique tiempos promedio."}], agendaServices:["Diagnóstico","Mantenimiento"]}
 };
 
 /* ---------- resumen diario ---------- */
@@ -2479,7 +2539,7 @@ function vMyDay(){
     <div class="panel"><h2>Responder primero</h2><p class="muted" style="font-size:12.5px;margin:-4px 0 8px">Llegan solas del chat de su página, el formulario, el correo y las redes. Cuando usted responde en la Bandeja, la persona sale de esta lista.</p>${wait.length?`<div class="list">${wait.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||l.phone||"Sin nombre")}</b><p>${esc((l.messages||[]).filter(m=>m.from==="cliente").slice(-1)[0]?.text||"")}</p></div><div class="row">${slaLate(l)?`<span class="chip hand">${waitingMin(l)} min</span>`:`<span class="chip">${waitingMin(l)} min</span>`}<button class="btn sm primary" data-open="${l.id}">Responder</button></div></div>`).join("")}</div>`:'<p class="muted">Nadie está esperando. Muy bien.</p>'}</div>
     <div class="panel"><h2>Tareas</h2>${tasks.length?`<div class="list">${tasks.map(t=>`<div class="item"><label class="toggle t" style="align-items:flex-start"><input type="checkbox" data-ptask="${t.lead.id}|${t.id}"><span><b>${esc(t.text)}</b><br><span class="muted">${esc(t.lead.name||"")} · ${t.due?((t.due<now()?"vencida ":"")+fdt(t.due)):"sin fecha"}</span></span></label><button class="btn sm" data-open="${t.lead.id}">Abrir</button></div>`).join("")}</div>`:'<p class="muted">Sin tareas pendientes para hoy. Cree tareas desde la ficha de cada cliente.</p>'}</div>
     <div class="panel"><h2>Citas de hoy</h2>${citas.length?`<div class="list">${citas.map(a=>`<div class="item"><div class="t"><b>${new Date(a.at).toLocaleTimeString("es-CO",{hour:"numeric",minute:"2-digit"})} · ${esc(a.client)}</b><p>${esc(a.service)}${a.sede?" · "+esc(sedeName(a.sede)):""}</p></div><button class="btn sm" data-view="agenda">Ver</button></div>`).join("")}</div>`:'<p class="muted">No hay citas hoy.</p>'}</div>
-    <div class="panel"><h2>Seguimientos y cobros</h2>${fol.length||cob.length?`<div class="list">${fol.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||"Sin nombre")}</b><p>Seguimiento pendiente</p></div><button class="btn sm" data-open="${l.id}">Abrir</button></div>`).join("")}${cob.map(i=>`<div class="item"><div class="t"><b>${esc(i.client)}</b><p>${cop(balOf(i))} · ${lateDays(i)} días de mora</p></div><button class="btn sm" data-view="cobros">Cobros</button></div>`).join("")}</div>`:'<p class="muted">Nada pendiente.</p>'}</div>
+    <div class="panel"><h2>Seguimientos y cobros</h2>${fol.length||cob.length?`<div class="list">${fol.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||"Sin nombre")}</b><p>Seguimiento pendiente</p></div><button class="btn sm" data-open="${l.id}">Abrir</button></div>`).join("")}${cob.map(i=>`<div class="item"><div class="t"><b>${esc(i.client)}</b><p>${cop(balOf(i))} · ${lateDays(i)} ${(lateDays(i))===1?"día":"días"} de mora</p></div><button class="btn sm" data-view="cobros">Cobros</button></div>`).join("")}</div>`:'<p class="muted">Nada pendiente.</p>'}</div>
     <div class="panel"><h2>Sus clientes activos</h2><p class="muted" style="font-size:12.5px;margin:-4px 0 8px">Son los prospectos que usted marcó como «Ganado». Los casos los abre ${esc(S.config.assistant||"SofIA")} cuando el cliente reporta un problema; las fechas salen de la ficha de cada cliente.</p>${casos.length||hoyF.length||riesgo.length?`<div class="list">${casos.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||l.phone||"Sin nombre")}</b><p>Caso abierto: ${esc(openCases(l)[0].text||"")}</p></div><button class="btn sm primary" data-cust="${l.id}">Atender</button></div>`).join("")}${hoyF.map(u=>`<div class="item"><div class="t"><b>${esc(u.l.name||"")}</b><p>Hoy: ${esc(u.t)}</p></div><button class="btn sm" data-cust="${u.l.id}">Ficha</button></div>`).join("")}${riesgo.map(l=>`<div class="item"><div class="t"><b>${esc(l.name||"")}</b><p>En riesgo: ${esc(riskOf(l).join(" · "))}</p></div><button class="btn sm" data-cust="${l.id}">Ficha</button></div>`).join("")}</div>`:'<p class="muted">Sus clientes están al día.</p>'}</div>
   </div>`;
 }
@@ -2607,7 +2667,7 @@ function advancedReports(m){
   <div class="panel"><h2>Satisfacción de los clientes</h2>${cs.length?`<p style="margin:0"><b style="font-family:var(--f-display);font-size:34px">${csat.toFixed(1)}</b> <span class="muted">de 5 · ${cs.length} respuesta${cs.length>1?"s":""}</span></p><div class="bars" style="margin-top:8px">${[5,4,3,2,1].map(v=>{const n=cs.filter(x=>x===v).length;return `<div class="l"><span>${"★".repeat(v)}</span><div class="bar"><i style="width:${n/cs.length*100}%;background:var(--signal)"></i></div><span class="mono">${n}</span></div>`}).join("")}</div>`:'<p class="muted">Todavía no hay calificaciones. La encuesta sale cuando una venta pasa a Ganado.</p>'}</div>
   <div class="panel"><h2>Tiempos de respuesta del equipo</h2>${people.length?`<div class="tablewrap"><table><thead><tr><th>Persona</th><th>Respuesta promedio</th><th>Con demora ahora</th><th>Ventas / meta</th><th>Satisfacción</th></tr></thead><tbody>${people.map(p=>`<tr><td><b>${esc(p.u.name)}</b></td><td class="mono">${fmtMin(p.avg)}</td><td>${p.late?`<span class="chip hand">${p.late}</span>`:'<span class="chip st-ganado">0</span>'}</td><td class="mono">${p.won}${p.goal?" / "+p.goal:""}</td><td class="mono">${p.cs.length?(p.cs.reduce((a,b)=>a+b,0)/p.cs.length).toFixed(1):"—"}</td></tr>`).join("")}</tbody></table></div>`:'<p class="muted">Sin usuarios.</p>'}</div>
   <div class="panel"><h2>Resultado por canal en ${MES(m)}</h2>${roi.length?`<div class="tablewrap"><table><thead><tr><th>Canal</th><th>Prospectos</th><th>Ventas</th><th>Valor vendido</th><th>Inversión</th><th>Costo por prospecto</th><th>Retorno</th></tr></thead><tbody>${roi.map(r=>`<tr><td>${chip(r.k)}</td><td class="mono">${r.nl}</td><td class="mono">${r.w}</td><td class="mono">${cop(r.val)}</td><td class="mono">${r.spend?cop(r.spend):"—"}</td><td class="mono">${r.spend&&r.nl?cop(r.spend/r.nl):"—"}</td><td class="mono">${r.spend?(r.val/r.spend).toFixed(1)+"x":"—"}</td></tr>`).join("")}</tbody></table></div><p class="muted" style="font-size:12.5px">La inversión en publicidad se registra en Ajustes comerciales.</p>`:'<p class="muted">Sin datos de canales en este mes.</p>'}</div>
-  <div class="panel" style="grid-column:1/-1"><h2>Horas con más mensajes de clientes</h2><div class="tablewrap"><table class="heat"><thead><tr><th></th>${[...Array(24)].map((_,h)=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${[1,2,3,4,5,6,0].map(d=>`<tr><th>${DAYS[d].slice(0,3)}</th>${grid[d].map(v=>`<td title="${v} mensajes" style="background:color-mix(in srgb, var(--accent) ${Math.round(v/gmax*85)}%, var(--surface-2))"></td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="muted" style="font-size:12.5px">Más oscuro = más mensajes. Úselo para organizar los turnos del equipo.</p></div>
+  <div class="panel" style="grid-column:1/-1"><h2>Horas con más mensajes de clientes</h2><div class="tablewrap"><table class="heat"><thead><tr><th></th>${[...Array(24)].map((_,h)=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${[1,2,3,4,5,6,0].map(d=>`<tr><th>${DAYS[d].slice(0,3)}</th>${grid[d].map(v=>`<td title="${v} ${(v)===1?"mensaje":"mensajes"}" style="background:color-mix(in srgb, var(--accent) ${Math.round(v/gmax*85)}%, var(--surface-2))"></td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="muted" style="font-size:12.5px">Más oscuro = más mensajes. Úselo para organizar los turnos del equipo.</p></div>
   <div class="panel" style="grid-column:1/-1"><h2>Preguntas que el asistente no supo responder</h2>${unk.length?`<div class="list">${unk.slice(-15).reverse().map((u,i)=>`<div class="item"><div class="t"><b>${esc(u.q)}</b><p>${esc(u.l.name||"Cliente")}</p></div>${can("config")?`<button class="btn sm" data-pact="unk2faq|${esc(u.q)}">Agregar a preguntas frecuentes</button>`:""}</div>`).join("")}</div>`:'<p class="muted">Ninguna por ahora. Cuando el asistente no tenga la información, la pregunta aparecerá aquí para completar la base de conocimiento.</p>'}</div>
   ${!aiOn()?insightsPanel(m,{roi,people,reasons,lost,grid,unk}):""}
   <div class="panel" style="grid-column:1/-1;${aiOn()?"":"display:none"}"><h2>Pregúntele a sus datos</h2><div class="row" style="flex-wrap:nowrap"><input type="text" id="askq" placeholder="Ej.: ¿qué canal trajo más ventas este mes y qué asesor responde más rápido?" aria-label="Pregunta"><button class="btn primary" data-pact="ask">Preguntar</button></div>
@@ -2615,7 +2675,7 @@ function advancedReports(m){
 }
 function insightsPanel(m,d){
   const out=[];
-  const best=[...d.roi].sort((a,b)=>b.w-a.w||b.nl-a.nl)[0]; if(best&&best.nl) out.push(`El canal que más prospectos trajo en ${MES(m)} fue ${(CHANNELS[best.k]||{}).label}: ${best.nl} prospectos y ${best.w} ventas.`);
+  const best=[...d.roi].sort((a,b)=>b.w-a.w||b.nl-a.nl)[0]; if(best&&best.nl) out.push(`El canal que más prospectos trajo en ${MES(m)} fue ${(CHANNELS[best.k]||{}).label}: ${best.nl} ${(best.nl)===1?"prospecto":"prospectos"} y ${best.w} ventas.`);
   const paid=d.roi.filter(r=>r.spend); if(paid.length){ const top=paid.sort((a,b)=>(b.val/b.spend)-(a.val/a.spend))[0]; out.push(`La publicidad que más rindió fue ${(CHANNELS[top.k]||{}).label}: cada peso invertido devolvió ${(top.val/top.spend).toFixed(1)} en ventas.`); }
   const fast=d.people.filter(p=>p.avg!=null).sort((a,b)=>a.avg-b.avg); if(fast.length) out.push(`${fast[0].u.name} es quien responde más rápido (${fast[0].avg<60?Math.round(fast[0].avg)+" min":(fast[0].avg/60).toFixed(1)+" h"} en promedio).${fast.length>1?` ${fast[fast.length-1].u.name} es quien más tarda.`:""}`);
   const late=d.people.filter(p=>p.late); if(late.length) out.push(`Ahora hay clientes esperando con demora en el equipo de ${late.map(p=>p.u.name).join(", ")}.`);
@@ -2715,6 +2775,7 @@ document.addEventListener("click", async e=>{
   const t=e.target.closest("[data-srv]"); if(!t||!SRV) return;
   const [a,arg]=t.dataset.srv.split("|");
   if(a==="logout") return window.GC_logout();
+  if(a==="misdatos"){ try{ const r=await fetch(window.GC_API+"/api/mis-datos",{headers:{Authorization:"Bearer "+localStorage.getItem("gc_token")}}); if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error||"No se pudo descargar."); const b=await r.blob(); const url=URL.createObjectURL(b); const el=document.createElement("a"); el.href=url; el.download="agente-ia-mis-datos.csv"; document.body.appendChild(el); el.click(); setTimeout(()=>{URL.revokeObjectURL(url); el.remove();},1000); toast("Descargado: agente-ia-mis-datos.csv"); }catch(err){ toast(err.message||"No se pudo descargar."); } return; }
   if(a==="pass"){ S.passOpen=true; render(); return; }
   if(a==="passok"){ try{ await window.GC_req("POST","/api/auth/password",{current:$("#pw-cur").value, password:$("#pw-new").value}); S.passOpen=false; render(); toast("Contraseña cambiada"); }catch(err){ toast(err.message); } return; }
   if(a==="passno"){ S.passOpen=false; render(); return; }
@@ -2762,15 +2823,13 @@ document.addEventListener("click", async e=>{
     case "savewelcome": writeConfig({formWelcome:$("#formWelcome").value}); toast("Mensaje guardado"); break;
     case "addfaq": { S.fresh=true; const f=readFaqs(); f.push({q:"",a:""}); writeConfig({faqs:f}); break; }
     case "savekb": { const g=id=>$("#kb-"+id).value; writeConfig({company:g("company").trim()||"Su empresa",sector:g("sector"),city:g("city"),hours:g("hours"),phone:g("phone"),assistant:g("assistant"),tone:g("tone"),services:g("services"),extra:g("extra"),faqs:readFaqs().filter(f=>f.q.trim()||f.a.trim())}); toast("Base de conocimiento guardada"); break; }
-    case "cleardemo": { const d=leadsArr().filter(x=>x.demo); const di0=[...S.invoices.values()].filter(x=>x.demo); if(!d.length&&!di0.length){toast("No hay datos de ejemplo.");return;} if(t.dataset.confirm!=="1"){ t.dataset.confirm="1"; t.textContent=`Confirmar: borrar ${d.length+di0.length}`; t.classList.add("warm"); return; } d.forEach(x=>deleteLead(x.id)); const di=[...S.invoices.values()].filter(x=>x.demo); di.forEach(x=>deleteInvoice(x.id)); toast(`${d.length} prospectos y ${di.length} cuentas de ejemplo borrados`); break; }
+    case "cleardemo": { const d=leadsArr().filter(x=>x.demo); const di0=[...S.invoices.values()].filter(x=>x.demo); if(!d.length&&!di0.length){toast("No hay datos de ejemplo.");return;} if(t.dataset.confirm!=="1"){ t.dataset.confirm="1"; t.textContent=`Confirmar: borrar ${d.length+di0.length}`; t.classList.add("warm"); return; } d.forEach(x=>deleteLead(x.id)); const di=[...S.invoices.values()].filter(x=>x.demo); di.forEach(x=>deleteInvoice(x.id)); toast(`${d.length} ${(d.length)===1?"prospecto":"prospectos"} y ${di.length} cuentas de ejemplo borrados`); break; }
     case "newuser": S.editUser={role:"asesor"}; S.fresh=true; render(); break;
     case "canceluser": S.editUser=null; render(); break;
     case "saveuser": { if(!can("users")) return; const name=$("#u-name").value.trim(); if(!name){toast("Escriba el nombre del usuario.");return;}
       const e2=S.editUser||{}; const u={id:e2.id||uid("u"), name, email:$("#u-email").value.trim(), role:$("#u-role").value, active:$("#u-active")?$("#u-active").checked:true, createdAt:e2.createdAt||Date.now()};
       const admins=usersArr().filter(x=>x.role==="admin"&&x.active!==false&&x.id!==u.id);
       if(e2.id && !admins.length && (u.role!=="admin"||!u.active)){ toast("Debe quedar al menos un administrador activo."); return; }
-      const activeOthers=usersArr().filter(x=>x.active!==false&&x.id!==u.id).length;
-      if(u.active && activeOthers>=plan().maxUsers){ toast(`El plan ${plan().label} permite ${plan().maxUsers} usuarios activos. Desactive uno o mejore el plan.`); return; }
       if($("#u-sede")) u.sede=$("#u-sede").value;
       if(SRV){ try{ const r=await window.GC_req("POST","/api/auth/users",{...u, tid:S.tid, password:$("#u-pass")?.value.trim()||undefined}); S.users.set(u.id,u); S.editUser=null; render(); toast(e2.id?"Usuario actualizado":r&&r.enlace&&!/^error/.test(r.enlace)?"Usuario creado. Se envió el enlace para crear su contraseña a "+r.enlace+".":r&&r.enlace?"Usuario creado, pero el correo con el enlace no salió. Envíelo desde Cuentas y accesos.":"Usuario creado. Ya puede ingresar con su correo."); }catch(err){ toast(err.message||"No se pudo guardar el usuario."); } break; }
       writeUser(u); S.editUser=null; toast(e2.id?"Usuario actualizado":"Usuario creado"); break; }
@@ -2848,7 +2907,7 @@ document.addEventListener("change", async e=>{
   if(t.id==="aiFollow") writeConfig({aiFollow:t.checked, steps:readSteps()});
   if(t.id==="autoReply") writeConfig({autoReply:t.checked});
   if(t.dataset.stage){ await setStage(t.dataset.stage, t.value); }
-  if(t.id==="csvIn"||t.id==="csvIn2"){ const f=t.files[0]; if(f){ const r=new FileReader(); r.onload=()=>importCSV(String(r.result)); r.readAsText(f); t.value=""; } }
+  if(t.id==="csvIn"||t.id==="csvIn2"){ const f=t.files[0]; if(f){ leerTexto(f).then(importCSV); t.value=""; } }
 });
 document.addEventListener("submit", async e=>{
   if(e.target.id!=="leadForm") return; e.preventDefault();

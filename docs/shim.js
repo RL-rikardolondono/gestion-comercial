@@ -18,6 +18,7 @@
   window.GC_req = req;
   function logout() { try { localStorage.removeItem(TOK_KEY); localStorage.removeItem("atd_me"); } catch (e) {} location.reload(); }
   window.GC_logout = logout;
+  window.addEventListener("hashchange", function () { if (/reset=|registro/.test(location.hash)) location.reload(); });
 
   /* ---------- pantalla de ingreso ---------- */
   function loginScreen() {
@@ -27,8 +28,8 @@
       '<form id="gc-login" style="background:#fff;border:1px solid #DCE5EE;box-shadow:0 1px 3px rgba(11,79,138,.08),0 8px 24px rgba(11,79,138,.08);border-radius:14px;padding:28px;width:min(380px,100%);display:flex;flex-direction:column;gap:12px">' +
       '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:32px;font-weight:700;color:#0B4F8A">Agente-<span style="color:#14A38B">IA</span></div>' +
       '<div style="color:#5D6B78;margin-top:-8px">Ingrese con su correo y contraseña.</div>' +
-      '<label style="font-size:13px;font-weight:600">Correo<input name="email" type="email" required autocomplete="username" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit"></label>' +
-      '<label style="font-size:13px;font-weight:600">Contraseña<input name="password" type="password" required autocomplete="current-password" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit"></label>' +
+      '<label style="font-size:13px;font-weight:600">Correo<input name="email" type="email" required autocomplete="username" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #9FB3C8;border-radius:8px;font:inherit"></label>' +
+      '<label style="font-size:13px;font-weight:600">Contraseña<input name="password" type="password" required autocomplete="current-password" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #9FB3C8;border-radius:8px;font:inherit"></label>' +
       '<button style="padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Ingresar</button>' +
       '<div id="gc-err" role="status" style="color:#B93A27;font-size:13px"></div>' +
       '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px"><a href="#" id="gc-forgot" style="color:#0B4F8A">¿Olvidó su contraseña?</a><a href="#" id="gc-demo" style="color:#0E8571;font-weight:600">Probar la demostración</a></div>' +
@@ -43,7 +44,18 @@
       try { localStorage.setItem(TOK_KEY, j.token); localStorage.setItem("atd_me", JSON.stringify(j.user.id)); if (j.user.tid) localStorage.setItem("atd_tid", JSON.stringify(j.user.tid)); localStorage.setItem("atd_view", JSON.stringify(j.user.staff ? "clientes" : j.user.role === "asesor" ? "midia" : "panel")); } catch (e) {}
       location.hash = ""; location.reload();
     }
-    var post = function (u, b) { return fetch(API + u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }); };
+    // El servidor gratuito se duerme cuando nadie lo usa: antes de enviar se despierta y se avisa en español (no la pantalla en inglés)
+    var despierto = false;
+    function despertar() {
+      if (despierto) return Promise.resolve();
+      var t0 = Date.now(), aviso = setTimeout(function () { var m = document.querySelector("#gc-err,#gc-err2,#gc-err3"); if (m) { m.style.color = "#5D6B78"; m.textContent = "Estamos encendiendo el servidor de Agente-IA. Puede tardar hasta un minuto la primera vez; no cierre esta página…"; } }, 2500);
+      return (function intento() {
+        return fetch(API + "/salud", { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error("dormido"); despierto = true; clearTimeout(aviso); })
+          .catch(function () { if (Date.now() - t0 > 100000) { clearTimeout(aviso); throw new Error("sin servidor"); } return new Promise(function (ok) { setTimeout(ok, 3000); }).then(intento); });
+      })();
+    }
+    fetch(API + "/salud", { cache: "no-store" }).then(function (r) { if (r.ok) despierto = true; }).catch(function () {}); // lo empieza a despertar mientras la persona escribe
+    var post = function (u, b) { return despertar().then(function () { return fetch(API + u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }); };
     var errEl = document.getElementById("gc-err");
     document.getElementById("gc-demo").onclick = function (e) { e.preventDefault(); var b = document.getElementById("gc-demobox"); b.hidden = !b.hidden; };
     w.querySelectorAll("[data-demo]").forEach(function (b) { b.onclick = function () { errEl.textContent = "Entrando a la demostración…"; post("/api/auth/demo", { role: b.dataset.demo }).then(function (x) { if (!x.ok) { errEl.textContent = x.j.error || "La demostración no está disponible."; return; } enter(x.j); }).catch(function () { errEl.textContent = "No hay conexión con el servidor."; }); }; });
@@ -54,13 +66,13 @@
       post("/api/auth/olvido", { email: em }).then(function (x) { errEl.style.color = "#0E8571"; var mk = em.replace(/^(.{2})[^@]*(@.*)$/, function (_, a, d) { return a + "\u2022\u2022\u2022\u2022\u2022\u2022" + d; }); errEl.textContent = "Si " + mk + " tiene una cuenta, le enviamos un enlace para crear una contraseña nueva. Revise también la carpeta de correo no deseado."; }).catch(function () { errEl.style.color = "#B93A27"; errEl.textContent = "No hay conexión con el servidor."; });
     };
     // Registro propio de la empresa (15 días de prueba gratis, sin tarjeta)
-    var IN = 'display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit';
+    var IN = 'display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #9FB3C8;border-radius:8px;font:inherit';
     function registro() {
       var f0 = document.getElementById("gc-login");
-      var sec = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Comercio / ferretería", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos"];
+      var sec = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Tienda / almacén", "Comercio / ferretería", "Concesionario / vehículos", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos"];
       f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">Cree la cuenta de su empresa</div>' +
         '<div style="color:#5D6B78;margin-top:-8px;font-size:14px">15 días de prueba gratis, sin tarjeta. Al terminar, si quiere seguir, paga la mensualidad en línea.</div>' +
-        '<label style="font-size:13px;font-weight:600">Nombre de la empresa<input name="empresa" required maxlength="80" autocomplete="organization" style="' + IN + '"></label>' +
+        '<label style="font-size:13px;font-weight:600">Nombre de la empresa<input name="empresa" required maxlength="120" autocomplete="organization" style="' + IN + '"></label>' +
         '<label style="font-size:13px;font-weight:600">Sector<select name="sector" style="' + IN + '"><option value="" selected>Seleccione su sector…</option>' + sec.map(function (x) { return '<option>' + x + '</option>'; }).join("") + '<option value="">Otro</option></select></label>' +
         '<label style="font-size:13px;font-weight:600">Ciudad<input name="ciudad" maxlength="60" autocomplete="address-level2" style="' + IN + '"></label>' +
         '<label style="font-size:13px;font-weight:600">Su nombre completo<input name="nombre" required maxlength="80" autocomplete="name" style="' + IN + '"></label>' +
@@ -68,13 +80,17 @@
         '<label style="font-size:13px;font-weight:600">Celular<input name="celular" type="tel" required maxlength="20" inputmode="tel" placeholder="300 123 4567" autocomplete="tel" style="' + IN + '"></label>' +
         '<label style="font-size:13px;font-weight:600">Plan que quiere probar<select name="plan" style="' + IN + '"><option value="basico">Básico · $190.000/mes</option><option value="pro" selected>Profesional · $390.000/mes</option><option value="empresarial">Empresarial · $790.000/mes</option></select></label>' +
         '<input name="web" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">' +
-        '<label style="display:grid;grid-template-columns:20px 1fr;gap:8px;font-size:12px;color:#5D6B78"><input name="acepto" type="checkbox" style="margin-top:2px"><span>Acepto las condiciones del servicio de Agente-IA y autorizo a SkyNet Genesis a tratar estos datos para crear y atender mi cuenta, según la Ley 1581 de 2012. Puedo pedir que los borren escribiendo a contacto@skynetgenesis.com.</span></label>' +
+        '<label style="display:grid;grid-template-columns:20px 1fr;gap:8px;font-size:12px;color:#5D6B78"><input name="acepto" type="checkbox" style="margin-top:2px"><span>Acepto las <a href="condiciones.html" target="_blank" rel="noopener" style="color:#0B4F8A;font-weight:600">condiciones del servicio</a> de Agente-IA y autorizo a SkyNet Genesis a tratar estos datos para crear y atender mi cuenta, según la Ley 1581 de 2012. Puedo pedir que los borren escribiendo a contacto@skynetgenesis.com.</span></label>' +
         '<button style="padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Crear mi cuenta gratis</button><div id="gc-err3" role="status" style="font-size:13px"></div><a href="#" id="gc-back2" style="font-size:13px;color:#0B4F8A">← Ya tengo cuenta: ingresar</a>';
       document.getElementById("gc-back2").onclick = function (e) { e.preventDefault(); location.hash = ""; location.reload(); };
+      // El plan escogido en la ficha de skynetgenesis.com llega como #registro&plan=… (o ?plan=…)
+      var pl = (location.hash + "&" + location.search).match(/[?&#]plan=(basico|pro|empresarial)\b/);
+      if (pl) f0.plan.value = pl[1];
       f0.onsubmit = function (e) {
         e.preventDefault(); var m = document.getElementById("gc-err3"), bt = f0.querySelector("button");
         var d = { empresa: f0.empresa.value, sector: f0.sector.value, ciudad: f0.ciudad.value, nombre: f0.nombre.value, correo: f0.correo.value, celular: f0.celular.value, plan: f0.plan.value, acepto: f0.acepto.checked, web: f0.web.value };
-        if (!d.acepto) { m.style.color = "#B93A27"; m.textContent = "Para crear la cuenta debe aceptar las condiciones y el tratamiento de datos."; return; }
+        var falta = d.empresa.trim().length < 2 ? "Escriba el nombre de la empresa." : d.nombre.trim().length < 3 ? "Escriba su nombre completo." : !/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(d.correo.trim()) ? "Escriba un correo válido: allí le llega el enlace para crear la contraseña." : d.celular.replace(/\D/g, "").length < 10 ? "Escriba un celular válido (10 dígitos)." : !d.acepto ? "Para crear la cuenta debe aceptar las condiciones y el tratamiento de datos." : "";
+        if (falta) { m.style.color = "#B93A27"; m.textContent = falta; return; }
         m.style.color = "#5D6B78"; m.textContent = "Creando su cuenta…"; bt.disabled = true;
         post("/api/public/registro", d).then(function (x) {
           bt.disabled = false;
@@ -95,18 +111,21 @@
     var rt = (location.hash.match(/reset=([A-Za-z0-9_-]+)/) || [])[1];
     if (rt) {
       var f0 = document.getElementById("gc-login");
-      f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">Nueva contraseña</div>' +
-        '<label style="font-size:13px;font-weight:600">Escriba la nueva contraseña (mínimo 8 caracteres)<input name="np" type="password" minlength="8" required autocomplete="new-password" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #DCE5EE;border-radius:8px;font:inherit"></label>' +
+      f0.innerHTML = '<div style="font-family:\'Barlow Condensed\',sans-serif;font-size:28px;font-weight:700;color:#0B4F8A">Cree su contraseña</div>' +
+        '<div style="color:#5D6B78;margin-top:-8px;font-size:14px">Con ella entrará a Agente-IA de ahora en adelante. Use al menos 8 caracteres.</div>' +
+        '<label style="font-size:13px;font-weight:600">Contraseña<input name="np" type="password" minlength="8" required autocomplete="new-password" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #9FB3C8;border-radius:8px;font:inherit"></label>' +
+        '<label style="font-size:13px;font-weight:600">Escríbala otra vez<input name="np2" type="password" minlength="8" required autocomplete="new-password" style="display:block;width:100%;box-sizing:border-box;margin-top:4px;padding:10px;border:1px solid #9FB3C8;border-radius:8px;font:inherit"></label>' +
         '<button style="padding:12px;border:0;border-radius:8px;background:#14A38B;color:#fff;font-weight:600;font-size:15px;cursor:pointer">Guardar contraseña</button><div id="gc-err2" role="status" style="font-size:13px"></div><a href="#" id="gc-back" style="font-size:13px;color:#0B4F8A">← Volver al ingreso</a>';
-      f0.onsubmit = function (e) { e.preventDefault(); var m = document.getElementById("gc-err2"); m.textContent = "Guardando…";
-        post("/api/auth/reset", { token: rt, password: f0.np.value }).then(function (x) { if (!x.ok) { m.style.color = "#B93A27"; m.textContent = x.j.error; return; } m.style.color = "#0E8571"; m.textContent = "Listo. Ya puede ingresar con su nueva contraseña."; setTimeout(function () { location.hash = ""; location.reload(); }, 1800); }).catch(function () { m.style.color = "#B93A27"; m.textContent = "No hay conexión con el servidor. Intente de nuevo."; }); };
+      f0.onsubmit = function (e) { e.preventDefault(); var m = document.getElementById("gc-err2");
+        if (f0.np.value !== f0.np2.value) { m.style.color = "#B93A27"; m.textContent = "Las dos contraseñas no son iguales. Escríbalas de nuevo."; return; }
+        m.style.color = "#5D6B78"; m.textContent = "Guardando…";
+        post("/api/auth/reset", { token: rt, password: f0.np.value }).then(function (x) { if (!x.ok) { m.style.color = "#B93A27"; m.textContent = x.j.error; return; } m.style.color = "#0E8571"; m.textContent = "Listo. Ya puede ingresar con su correo y esta contraseña."; setTimeout(function () { location.hash = ""; location.reload(); }, 1800); }).catch(function () { m.style.color = "#B93A27"; m.textContent = "No hay conexión con el servidor. Intente de nuevo."; }); };
       document.getElementById("gc-back").onclick = function (e) { e.preventDefault(); location.hash = ""; location.reload(); };
       return;
     }
     document.getElementById("gc-login").onsubmit = function (e) {
       e.preventDefault(); var f = e.target, err = document.getElementById("gc-err"); err.textContent = "Ingresando…";
-      fetch(API + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: f.email.value, password: f.password.value }) })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      post("/api/auth/login", { email: f.email.value, password: f.password.value })
         .then(function (x) {
           if (!x.ok) { err.textContent = x.j.error || "No se pudo ingresar."; return; } if (x.j) { enter(x.j); return; }
           try { localStorage.setItem(TOK_KEY, x.j.token); localStorage.setItem("atd_me", JSON.stringify(x.j.user.id)); if (x.j.user.tid) localStorage.setItem("atd_tid", JSON.stringify(x.j.user.tid)); localStorage.setItem("atd_view", JSON.stringify(x.j.user.staff ? "clientes" : x.j.user.role === "asesor" ? "midia" : "panel")); } catch (e2) {}
