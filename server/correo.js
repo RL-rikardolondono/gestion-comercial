@@ -88,7 +88,7 @@ async function conectar() {
       const r = await fetch("https://api.brevo.com/v3/webhooks", { method: "POST", headers: H, body: JSON.stringify({ type: "inbound", events: ["inboundEmailProcessed"], url, domain: DOM(), description: "Agente-IA: respuestas de los clientes a la Bandeja" }) });
       if (!r.ok) { const txt = (await r.text()).slice(0, 300); console.error("correo entrante: Brevo no creó el webhook", r.status, txt); await db.kvSet("inbound:err", r.status + " " + txt).catch(() => {}); return; }
     }
-    await db.kvSet("inbound:ok", Date.now()); activo = null;
+    await db.kvSet("inbound:ok", Date.now()); await db.kvSet("inbound:err", "").catch(() => {}); activo = null;
     console.log("Correo entrante: webhook listo en Brevo;", (await mxListo()) ? "registros MX listos" : "faltan los registros MX de " + DOM());
   } catch (e) { console.error("correo entrante: no se pudo conectar con Brevo", e.message); }
 }

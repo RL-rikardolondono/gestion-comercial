@@ -355,7 +355,7 @@ app.use(express.static(path.join(__dirname, "..", "docs"), { index: "index.html"
 
 const PORT = process.env.PORT || 3000;
 (async () => {
-  await db.init(); await auth.bootstrap(); await auth.bootstrapDemo().catch((e) => console.error("demo", e.message)); require("./correo").conectar();
+  await db.init(); await auth.bootstrap(); await auth.bootstrapDemo().catch((e) => console.error("demo", e.message)); require("./correo").conectar(); setInterval(() => { db.kvGet("inbound:ok").then((v) => { if (!v) require("./correo").conectar(); }).catch(() => {}); }, 30 * 60000).unref(); // reintenta hasta que Brevo acepte el subdominio
   app.listen(PORT, () => console.log("Agente-IA escuchando en", PORT));
   // Revisión interna cada 5 minutos mientras el servidor esté despierto (solo usa la base si hay algo pendiente)
   setInterval(() => engine.tick().catch((e) => console.error("tick", e.message)), 5 * 60000);
