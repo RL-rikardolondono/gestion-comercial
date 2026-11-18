@@ -12,7 +12,7 @@
     return fetch(API + url, { method: method, headers: { "Content-Type": "application/json", Authorization: "Bearer " + token }, body: body ? JSON.stringify(body) : undefined })
       .then(function (r) {
         if (r.status === 401) { logout(); return Promise.reject({ code: "revoked", message: "Sesión vencida" }); }
-        return r.json().then(function (j) { if (!r.ok) return Promise.reject({ code: j.code || "unavailable", message: j.error || "Error", text: j.text }); return j; });
+        return r.json().catch(function () { return Promise.reject({ status: r.status, code: "unavailable", message: "Error" }); }).then(function (j) { if (!r.ok) return Promise.reject({ status: r.status, code: j.code || "unavailable", message: j.error || "Error", text: j.text }); return j; });
       });
   }
   window.GC_req = req;
@@ -171,7 +171,20 @@
     var docs = (list || []).map(function (d) { return { id: d.id, exists: true, data: function () { return d.data; }, metadata: { fromCache: false, hasPendingWrites: false } }; });
     return { docs: docs, size: docs.length, empty: !docs.length, docChanges: function () { return []; }, metadata: { fromCache: false, hasPendingWrites: false } };
   }
-  function poll(s) {
+  // Sincronización: UNA sola petición para todo lo que la pantalla está mirando, y solo trae lo que cambió.
+  // Ritmo según el uso: cada 6 s mientras alguien trabaja, cada 20 s si lleva un rato quieto, cada 60 s si lleva más de
+  // 10 minutos sin tocar nada, y nada mientras la pestaña está oculta (al volver se actualiza de inmediato).
+  function poll(s) { return syncNow(); }
+  function applyCol(s, c) {
+    if (!s.cache) s.cache = new Map();
+    if (!c.delta) { s.cache = new Map(); (c.docs || []).forEach(function (d) { s.cache.set(d.id, d); }); }
+    else { (c.gone || []).forEach(function (id) { s.cache.delete(id); }); (c.docs || []).forEach(function (d) { s.cache.set(d.id, d); }); }
+    s.rev = c.rev; s.t = c.t;
+    var list = Array.from(s.cache.values()).sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+    s.next(colSnap(list));
+  }
+  var syncing = null, again = false, legacy = false;
+  function legacyPoll(s) {
     if (!s.alive) return Promise.resolve();
     if (s.kind === "doc") return req("GET", "/api/doc?path=" + encodeURIComponent(s.path) + (s.last ? "&v=" + encodeURIComponent(s.last) : "")).then(function (j) {
       if (j.same) return; var sig = j.v || (j.exists ? String(j.version) + ":" + j.updatedAt : "del"); if (sig !== s.last) { s.last = sig; s.next(snapDoc(s.path, j)); }
@@ -180,9 +193,35 @@
       if (j.same) return; s.rev = j.rev; s.next(colSnap(j.docs));
     }).catch(function (e) { if (e && e.code === "revoked" && s.err) s.err(e); });
   }
-  var kickT = null;
-  function kick() { clearTimeout(kickT); kickT = setTimeout(function () { subs.forEach(poll); }, 600); }
-  setInterval(function () { if (document.visibilityState !== "hidden") subs.forEach(poll); }, 5000);
+  function syncNow() {
+    if (syncing) { again = true; return syncing; }
+    var list = Array.from(subs).filter(function (s) { return s.alive; }); if (!list.length) return Promise.resolve();
+    if (legacy) return Promise.all(list.map(legacyPoll));
+    var body = { docs: [], cols: [] }, byPath = {};
+    list.forEach(function (s) {
+      (byPath[s.kind + ":" + s.path] = byPath[s.kind + ":" + s.path] || []).push(s);
+      if (s.kind === "doc") body.docs.push({ path: s.path, v: s.last || "" });
+      else body.cols.push({ path: s.path, rev: s.rev || "", t: s.cache ? s.t || 0 : 0 });
+    });
+    lastSync = Date.now();
+    syncing = req("POST", "/api/sync", body).then(function (j) {
+      (j.docs || []).forEach(function (d) { (byPath["doc:" + d.path] || []).forEach(function (s) { if (!s.alive) return; var sig = d.v || "del"; if (sig !== s.last) { s.last = sig; s.next(snapDoc(s.path, d)); } }); });
+      (j.cols || []).forEach(function (c) { (byPath["col:" + c.path] || []).forEach(function (s) { if (s.alive) applyCol(s, c); }); });
+    }).catch(function (e) {
+      if (e && e.status === 404) { legacy = true; return Promise.all(list.map(legacyPoll)); }
+      if (e && e.code === "revoked") list.forEach(function (s) { if (s.err) s.err(e); });
+    }).then(function () { syncing = null; if (again) { again = false; return syncNow(); } });
+    return syncing;
+  }
+  var kickT = null, lastUse = Date.now(), lastSync = 0;
+  function kick() { lastUse = Date.now(); clearTimeout(kickT); kickT = setTimeout(syncNow, 600); }
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach(function (ev) { window.addEventListener(ev, function () { lastUse = Date.now(); }, { passive: true, capture: true }); });
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState !== "hidden") { lastUse = Date.now(); syncNow(); } });
+  setInterval(function () {
+    if (document.visibilityState === "hidden") return;
+    var quieto = Date.now() - lastUse, cada = quieto < 120000 ? 6000 : quieto < 600000 ? 20000 : 60000;
+    if (Date.now() - lastSync >= cada - 500) syncNow();
+  }, 2000);
   var dbApi = { doc: docRef, collection: colRef };
 
   /* ---------- IA ---------- */

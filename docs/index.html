@@ -3,7 +3,7 @@
 <meta name="gc-api" content="https://api-comercial.skynetgenesis.com">
 <style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif;background:#F4F8FB}img{max-width:100%}[hidden]{display:none!important}</style>
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icono.svg" type="image/svg+xml"><meta name="theme-color" content="#0B4F8A">
-<script src="shim.js?v=20261106w"></script>
+<script src="shim.js?v=20261118"></script>
 <script>if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});</script>
 </head><body>
 <title>Agente-IA</title>
@@ -950,7 +950,7 @@ function vPanel(){
     <div class="kpi"><small>Citas de hoy</small><b>${apptArr().filter(a=>a.status==="programada"&&sameDay(a.at,now())).length}</b><em>${apptArr().filter(a=>a.status==="programada"&&a.at>now()).length} próximas</em></div>
     <div class="kpi ${due.length?"alert":""}"><small>Seguimientos vencidos</small><b>${due.length}</b><em>${!featOn("followup")?"No incluido en el plan "+plan().label:S.config.autoFollow?"Motor automático activo":"Motor automático apagado"}</em></div>
     ${featOn("collect")&&canView("cobros")?(()=>{const o=[...S.invoices.values()].filter(i=>balOf(i)>0);const v=o.filter(i=>lateDays(i)>0);return `<div class="kpi ${v.length?"alert":""}"><small>Cartera vencida</small><b style="font-size:24px">${cop(v.reduce((s,i)=>s+balOf(i),0))}</b><em>${v.length} cuentas en mora de ${o.length} abiertas</em></div>`})():""}
-    <div class="kpi ${convThisMonth()>plan().maxConv?"alert":""}"><small>Conversaciones del mes</small><b>${convThisMonth()}</b><em>De ${plan().maxConv.toLocaleString("es-CO")} del plan ${plan().label}</em></div>
+    <div class="kpi"><small>Conversaciones del mes</small><b>${convThisMonth()}</b><em>Ilimitadas en todos los planes</em></div>
     <div class="kpi"><small>Tiempo de respuesta</small><b>${avgS}</b><em>Promedio de primera respuesta</em></div>
     ${(()=>{const cu=customers(), rk=cu.filter(riskOf).length, oc=cu.reduce((s,l)=>s+openCases(l).length,0);return `<div class="kpi ${rk||oc?"alert":"good"}"><small>Clientes activos</small><b>${cu.length}</b><em>${rk} en riesgo · ${oc} caso${oc===1?"":"s"} abierto${oc===1?"":"s"}</em></div>`})()}
     <div class="kpi"><small>Conversión</small><b>${closed?Math.round(won/closed*100):0}%</b><em>${won} ganados de ${closed} cerrados</em></div>
@@ -981,7 +981,7 @@ function vInbox(){
   const nf=nextFollow(l);
   const thread=`<div class="panel thread"><div class="row" style="justify-content:space-between;margin-bottom:10px"><div><b style="font-size:16px">${esc(l.name||"Sin nombre")}</b> ${chip(l.channel)} ${consentChip(l)} ${l.csat?`<span class="chip">Calificó ${l.csat}/5</span>`:""} ${l.stage==="perdido"&&l.lossReason?`<span class="chip st-perdido">Perdido: ${esc(l.lossReason)}</span>`:""}</div>
       <label class="toggle"><input type="checkbox" id="pause" ${l.followPaused?"checked":""}> Pausar automatización</label></div>
-    <div class="msgs" id="msgs-${l.id}">${(l.messages||[]).map(m=>`<div class="msg ${m.from==="cliente"?"":"out "+m.from}">${esc(m.text)}<small>${lbl[m.from]||""}${m.by?" · "+esc(userName(m.by)):""}${m.step?" · paso "+m.step:""} · ${ago(m.at)}${m.wa?" · enviado por WhatsApp"+(m.waBy?" ("+esc(userName(m.waBy))+")":""):""}</small>${m===waPend(l)?`<div style="margin-top:6px">${waBtn(l,m)}</div>`:""}</div>`).join("")||'<p class="muted">Sin mensajes todavía.</p>'}${S.typing.has(l.id)?'<div class="msg out bot typing">El asistente está escribiendo…</div>':""}</div>
+    <div class="msgs" id="msgs-${l.id}">${(l.messages||[]).map(m=>`<div class="msg ${m.from==="cliente"?"":"out "+m.from}">${esc(m.text)}<small>${lbl[m.from]||""}${m.by?" · "+esc(userName(m.by)):""}${m.step?" · paso "+m.step:""}${m.via==="email"?" · respondió por correo":""} · ${ago(m.at)}${m.wa?" · enviado por WhatsApp"+(m.waBy?" ("+esc(userName(m.waBy))+")":""):""}</small>${m===waPend(l)?`<div style="margin-top:6px">${waBtn(l,m)}</div>`:""}</div>`).join("")||'<p class="muted">Sin mensajes todavía.</p>'}${S.typing.has(l.id)?'<div class="msg out bot typing">El asistente está escribiendo…</div>':""}</div>
     <div class="composer"><div class="row qr">${biz().quick.map((q,i)=>`<button class="btn sm ghost" data-qr="${i}" title="${esc(q.x)}">${esc(q.t)}</button>`).join("")}</div>
     ${l.optOut?'<p class="note" style="margin:0;background:var(--bad-soft);color:var(--bad)">Este cliente pidió no recibir más mensajes. Solo respóndale si él vuelve a escribir.</p>':""}
     <textarea id="reply" placeholder="Escriba una respuesta como asesor" aria-label="Respuesta"></textarea>
@@ -1268,7 +1268,7 @@ const minPlanLabel = ch => PLANS[minPlanFor(p=>p.channels.includes(ch))]?.label 
 
 function lockedView(v){
   const f=VIEW_FEAT[v]; const need=PLANS[minPlanFor(p=>p.feats.includes(f))];
-  return head(VIEWS.find(x=>x.id===v)?.label||"","")+`<div class="empty"><b>${FEAT_LABEL[f]} no está en el plan ${plan().label}</b>Está incluido desde el plan ${need?.label}. ${isProv()?'Puede cambiar el plan de esta empresa en <button class="btn sm" data-view="clientes">Mis clientes</button>.':'Pida el cambio de plan en <button class="btn sm" data-view="soporte">Soporte</button>.'}</div>`;
+  return head(VIEWS.find(x=>x.id===v)?.label||"","")+`<div class="empty"><b>${FEAT_LABEL[f]} no está en el plan ${plan().label}</b>Está incluido desde el plan ${need?.label}. ${isProv()?'Puede cambiar el plan de esta empresa en <button class="btn sm" data-view="clientes">Mis clientes</button>.':(me().role==="admin"?'Puede cambiar de plan usted mismo en <button class="btn sm" data-view="planes">Plan y consumo</button>.':'El administrador de su empresa puede cambiar el plan en Plan y consumo.')}</div>`;
 }
 
 function vConn(){
@@ -1445,7 +1445,7 @@ function vReports(){
   return head("Informe mensual",`${esc(S.config.company)} · ${MES(m)}`,
     `<select id="repMonth" aria-label="Mes" style="width:auto">${months.map(x=>`<option value="${x}" ${x===m?"selected":""}>${MES(x)}</option>`).join("")}</select>${sedeSelect("repSede",S.sedeFilter,true)}${can("export")?'<button class="btn" data-act="exportrep">Descargar informe</button>':""}`)
   + `<div class="kpis">
-    <div class="kpi"><small>Conversaciones atendidas</small><b>${r.convs.length}</b><em>De ${plan().maxConv.toLocaleString("es-CO")} incluidas en el plan</em></div>
+    <div class="kpi"><small>Conversaciones atendidas</small><b>${r.convs.length}</b><em>Ilimitadas en todos los planes</em></div>
     <div class="kpi"><small>Prospectos nuevos</small><b>${r.created.length}</b><em>Registrados en el mes</em></div>
     <div class="kpi good"><small>Ventas ganadas</small><b>${r.won.length}</b><em>${cop(r.value)} en valor</em></div>
     <div class="kpi"><small>Tiempo de primera respuesta</small><b>${avgS}</b><em>Promedio del mes</em></div>
@@ -1495,22 +1495,70 @@ document.addEventListener("click", async e=>{
   try{ await boldPagar(false, b.dataset.pack); S.boldMsg=""; }catch(err){ S.boldMsg=err&&err.message||"No se pudo abrir la pasarela de pagos."; toast(S.boldMsg); }
   render();
 }, true);
+/* ---------- cambio de plan desde la app (lo hace el administrador) ---------- */
+function planOps(){
+  if(!SRV||me().role!=="admin"||isProv()) return null;
+  if(!S.planOps && !S.planOpsC){ S.planOpsC=true; window.GC_req("GET","/api/plan/opciones").then(j=>{ S.planOps=j; render(); }).catch(()=>{ S.planOpsC=false; }); }
+  return S.planOps;
+}
+function planBtn(k){
+  const demo=!!(tenant().demo||(window.GC_USER&&window.GC_USER.demo));
+  if(!SRV||demo) return `<button class="btn sm" disabled title="En la demostración no se cambia el plan">Cambiar a ${PLANS[k].label}</button>`;
+  if(me().role!=="admin") return `<p class="muted" style="font-size:12.5px;margin:6px 0 0">El administrador de la empresa puede cambiar el plan.</p>`;
+  const o=(planOps()||{}).opciones?.[k]; if(!o) return `<button class="btn sm" disabled>Cambiar a ${PLANS[k].label}</button>`;
+  const pend=tenant().planNext||(planOps()||{}).pendiente?.plan; if(pend===k) return `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Cambio programado para el ${fechaPago(tenant().planNextDesde||(planOps()||{}).pendiente?.desde)}.</p>`;
+  if(o.bloqueo) return `<p class="muted" style="font-size:12.5px;margin:6px 0 0">${esc(o.bloqueo)}</p>`;
+  const txt=o.como==="pagar"?`Cambiar a ${o.label} · pagar ${cop(o.dif)}`:o.como==="proximo"?`Cambiar a ${o.label} desde el ${fechaPago(o.desde)}`:`Cambiar a ${o.label}`;
+  return `<button class="btn sm ${o.como==="proximo"?"":"primary"}" data-cambiaplan="${k}">${txt}</button>`;
+}
+function planAviso(){
+  const ops=planOps(), t=tenant(), pend=t.planNext||ops?.pendiente?.plan, desde=t.planNextDesde||ops?.pendiente?.desde;
+  let h="";
+  if(pend&&PLANS[pend]) h+=`<div class="note" style="margin-bottom:12px">Su plan cambia a <b>${PLANS[pend].label}</b> el ${fechaPago(desde)}, cuando termina lo que ya pagó. Hasta ese día sigue con todo lo del plan ${plan().label}. ${me().role==="admin"&&!isProv()?`<button class="btn sm" data-cambiaplan="${t.plan}">No cambiar, seguir en ${plan().label}</button>`:""}</div>`;
+  const k=S.planConf; const o=k&&ops?.opciones?.[k];
+  if(o) h+=`<div class="sheet"><div class="panel" role="dialog" aria-label="Cambiar de plan"><h2>Cambiar al plan ${o.label}</h2>
+    <p>${o.como==="inmediato"?`El cambio se hace de inmediato. Desde ahora su empresa tiene todo lo del plan ${o.label} y la próxima mensualidad será de ${cop(o.precio)}.`
+      :o.como==="pagar"?`Usted ya pagó este mes con el plan ${plan().label}. Para subir hoy solo paga la diferencia por los ${o.dias} días que faltan: <b>${cop(o.dif)}</b> con Bold (tarjeta, PSE, Nequi o llave Bre-B). Apenas Bold confirme el pago, su empresa queda con el plan ${o.label}. Desde el próximo mes la mensualidad será de ${cop(o.precio)}.`
+      :`Usted ya pagó hasta el ${fechaPago(cobroHasta())} con el plan ${plan().label}: lo conserva hasta ese día y no pierde nada de lo pagado. Desde el ${fechaPago(o.desde)} su plan será ${o.label} y pagará ${cop(o.precio)} al mes.`}</p>
+    <div class="row"><button class="btn primary" data-plango="${k}">${o.como==="pagar"?`Pagar ${cop(o.dif)} y cambiar`:"Confirmar el cambio"}</button><button class="btn" data-plango="">Cancelar</button></div></div></div>`;
+  return h;
+}
+const cobroHasta=()=>{ const t=tenant(); return String(t.paidUntil||t.trialUntil||"").slice(0,10); };
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("[data-cambiaplan],[data-plango]"); if(!b) return;
+  if(b.dataset.cambiaplan!==undefined){
+    const k=b.dataset.cambiaplan;
+    if(k===tenant().plan){ try{ await window.GC_req("POST","/api/plan/cambiar",{plan:k}); toast("Listo. Sigue con su plan actual."); S.planOps=null; S.planOpsC=false; }catch(err){ toast(err.message||"No se pudo."); } render(); return; }
+    S.planConf=k; render(); return; }
+  const k=b.dataset.plango; S.planConf=null; if(!k){ render(); return; }
+  b.disabled=true;
+  try{
+    const j=await window.GC_req("POST","/api/plan/cambiar",{plan:k});
+    S.planOps=null; S.planOpsC=false;
+    if(j.pagar){ toast("Abriendo el pago de la diferencia…"); await boldAbrir(j, `Agente-IA · cambio al plan ${PLANS[k].label}`); }
+    else if(j.programado) toast(`Listo. Su plan cambia a ${PLANS[k].label} el ${fechaPago(j.desde)}.`);
+    else toast(`Listo. Su empresa ya tiene el plan ${PLANS[k].label}.`);
+  }catch(err){ toast(err.message||"No se pudo cambiar el plan."); }
+  render();
+}, true);
+
 function vPlans(){
-  const p=platform().pricing, cur=tenant().plan, conv=convThisMonth(), lim=plan().maxConv, r=platform().aiRates, u=S.usage;
+  const p=platform().pricing, cur=tenant().plan, conv=convThisMonth(), r=platform().aiRates, u=S.usage;
   const usd=aiCostUSD(), per=u.calls?usd/u.calls:0;
   const list={
-    basico:["Chat para la página web","Formulario de contacto","Respuestas automáticas","Tablero de prospectos, clientes activos e importación CSV","Hasta 500 conversaciones al mes","Hasta 2 usuarios"],
-    pro:["Todo lo del Básico","Instagram, Messenger y anuncios de Meta","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Hasta 2.000 conversaciones al mes","Hasta 5 usuarios","Una mejora mensual incluida"],
-    empresarial:["Todo lo del Profesional",`Varias sedes: 1 incluida y ${cop(p.sede||0)} al mes por cada sede adicional`,"Webhook y API para conectar sus sistemas (Zapier, Make o el programa de su empresa)","Informes mensuales","Hasta 10.000 conversaciones al mes","Hasta 50 usuarios","Dos mejoras mensuales y soporte prioritario"]
+    basico:["Chat para la página web","Formulario de contacto","Respuestas automáticas","Tablero de prospectos, clientes activos e importación CSV","Conversaciones ilimitadas","Hasta 2 usuarios"],
+    pro:["Todo lo del Básico","Instagram, Messenger y anuncios de Meta","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Conversaciones ilimitadas","Hasta 5 usuarios","Una mejora mensual incluida"],
+    empresarial:["Todo lo del Profesional",`Varias sedes: 1 incluida y ${cop(p.sede||0)} al mes por cada sede adicional`,"Webhook y API para conectar sus sistemas (Zapier, Make o el programa de su empresa)","Informes mensuales","Conversaciones ilimitadas","Hasta 50 usuarios","Dos mejoras mensuales y soporte prioritario"]
   };
   const prov=isProv();
   return head("Plan y consumo", prov?"Precios de venta de Agente-IA y consumo de la empresa abierta. Los precios aplican a todas sus empresas clientes.":"Su plan actual, lo que incluye y cuánto ha usado este mes.")
   + `<div class="kpis"><div class="kpi"><small>Plan actual</small><b style="font-size:24px">${plan().label}</b><em>${cop(tenantFee({...tenant(), sedes:featOn("sedes")?S.sedes.size:0}))} al mes${extraSedes({...tenant(), sedes:S.sedes.size})?` · incluye ${extraSedes({...tenant(), sedes:S.sedes.size})} sede(s) adicional(es)`:""}</em></div>
-    <div class="kpi ${conv>lim?"alert":""}"><small>Conversaciones este mes</small><b>${conv.toLocaleString("es-CO")}</b><em>De ${lim.toLocaleString("es-CO")} incluidas</em><div class="bar" style="margin-top:6px"><i style="width:${Math.min(100,conv/lim*100)}%"></i></div></div>
+    <div class="kpi"><small>Conversaciones este mes</small><b>${conv.toLocaleString("es-CO")}</b><em>Ilimitadas en todos los planes</em></div>
     <div class="kpi"><small>Usuarios</small><b>${usersArr().filter(x=>x.active!==false).length}/${plan().maxUsers}</b><em>Activos en el plan</em></div></div>
+  ${planAviso()}
   <div class="plans">
     <p class="muted" style="grid-column:1/-1;margin:0">Sin costo de configuración inicial: 15 días de prueba gratis y después solo la mensualidad, mes a mes, con todos los medios de pago.</p>
-    ${PLAN_ORDER.map(k=>`<div class="panel plan ${k===cur?"feat":""}"><h3>${PLANS[k].label}${k===cur?" · plan actual":""}</h3><div class="price">${cop(planPrice(k))}<small> / mes</small></div><ul>${list[k].map(x=>`<li>${x}</li>`).join("")}</ul>${k!==cur&&!prov?`<button class="btn sm" data-reqplan="${k}">Solicitar cambio a ${PLANS[k].label}</button>`:""}</div>`).join("")}
+    ${PLAN_ORDER.map(k=>`<div class="panel plan ${k===cur?"feat":""}"><h3>${PLANS[k].label}${k===cur?" · plan actual":""}</h3><div class="price">${cop(planPrice(k))}<small> / mes</small></div><ul>${list[k].map(x=>`<li>${x}</li>`).join("")}</ul>${k!==cur&&!prov?planBtn(k):""}</div>`).join("")}
   </div>
   <div style="margin-top:14px">${isProv()?"":iaPanel()}</div>
   <div style="margin-top:14px">${tenantStatement()}</div>
@@ -2003,12 +2051,12 @@ ${d.bal?`<p class="note" style="${d.late>0?"background:var(--bad-soft);color:var
    Sin llave, sin «Ya pagué», sin comprobantes y sin desbloqueo provisional: el acceso se actualiza cuando Bold confirma. */
 const boldArr = () => [...(S.boldpagos||new Map()).values()].sort((a,b)=>(b.at||0)-(a.at||0));
 function payBox(compact){
-  const t=tenant(), val=tenantFee(t), hasta=trasPagoGC(t), demo=!!(t.demo||(window.GC_USER&&window.GC_USER.demo));
+  const t0=tenant(), t=t0.planNext&&t0.paidOnce?{...t0,plan:t0.planNext}:t0, val=tenantFee(t), hasta=trasPagoGC(t0), demo=!!(t0.demo||(window.GC_USER&&window.GC_USER.demo));
   const puede = SRV && !demo && me().role==="admin";
   const last=boldArr().find(r=>r.tid===S.tid);
   return `<div class="${compact?"":"panel"}" style="${compact?"background:#fff;color:var(--ink);border-radius:10px;padding:12px 14px;margin-top:10px;width:100%":""}">
     ${compact?"":"<h2>Pagar la mensualidad</h2>"}
-    <dl class="kv" style="margin:0"><dt>Plan</dt><dd>${esc(plan().label)}${extraSedes(t)?` + ${extraSedes(t)} sede${extraSedes(t)>1?"s":""} adicional${extraSedes(t)>1?"es":""}`:""}</dd><dt>Valor del mes</dt><dd class="mono"><b>${cop(val)}</b></dd><dt>Con este pago queda al día hasta el</dt><dd><b>${fechaPago(hasta)}</b></dd></dl>
+    <dl class="kv" style="margin:0"><dt>Plan</dt><dd>${esc((PLANS[t.plan]||plan()).label)}${extraSedes(t)?` + ${extraSedes(t)} sede${extraSedes(t)>1?"s":""} adicional${extraSedes(t)>1?"es":""}`:""}</dd><dt>Valor del mes</dt><dd class="mono"><b>${cop(val)}</b></dd><dt>Con este pago queda al día hasta el</dt><dd><b>${fechaPago(hasta)}</b></dd></dl>
     ${!t.paidOnce?`<p class="muted" style="font-size:12.5px;margin:6px 0 0">Primer pago: ${enPruebaGC(t)?"empieza a contar al terminar la prueba, así que no pierde ningún día de prueba.":"lo que queda de este mes va por cuenta de la casa."}</p>`:""}
     <div class="row" style="margin-top:10px">${puede?`<button class="btn primary" data-bold="pagar">Pagar en línea</button>`:`<span class="muted" style="font-size:13px">${demo?"En la demostración no se hacen pagos.":!SRV?"El pago en línea funciona en la versión publicada.":"El administrador de su empresa puede pagar desde esta pantalla."}</span>`}<a class="btn wa" href="${SG_WA}" target="_blank" rel="noopener">Soporte por WhatsApp</a></div>
     <p class="muted" style="font-size:12.5px;margin:6px 0 0">Todos los medios de pago: tarjeta débito o crédito, PSE, Nequi y llave Bre-B. Se paga mes a mes, sin multas ni intereses.</p>
@@ -2020,9 +2068,12 @@ function loadBoldLib(){ if(window.BoldCheckout) return Promise.resolve(); return
 // Abre la pasarela de Bold con el pedido firmado por el sistema central de SkyNet Genesis
 async function boldPagar(prueba, pack){
   const j=await window.GC_req("POST","/api/bold/firma", prueba?{prueba:true}:pack?{pack}:{});
+  return boldAbrir(j);
+}
+async function boldAbrir(j, desc){
   const o=j.orden||j.order||j;
   const d={orderId:o.orderId||o.order_id||o.referencia||o.orden, amount:String(o.amount||o.valor||o.monto||""), currency:o.currency||o.moneda||"COP", apiKey:o.apiKey||o.api_key||o.llave||o.identityKey,
-    signature:o.signature||o.integritySignature||o.integrity_signature||o.firma||o.hash, description:o.description||o.descripcion||"Agente-IA · mensualidad", redirectionUrl:o.redirectionUrl||o.redirection_url||o.volver||(location.origin+location.pathname+"?pago=bold")};
+    signature:o.signature||o.integritySignature||o.integrity_signature||o.firma||o.hash, description:o.description||o.descripcion||desc||"Agente-IA · mensualidad", redirectionUrl:o.redirectionUrl||o.redirection_url||o.volver||(location.origin+location.pathname+"?pago=bold")};
   if(!d.orderId||!d.amount||!d.apiKey||!d.signature) throw new Error("El sistema de pagos no devolvió los datos del pedido. Intente de nuevo o escríbanos por WhatsApp.");
   try{ localStorage.setItem("gc-bold-order", d.orderId); }catch{}
   await loadBoldLib();
@@ -2039,8 +2090,8 @@ async function boldVolver(){
   if(!ref||!SRV) return; history.replaceState(null,"",location.pathname+location.hash);
   S.boldMsg="Revisando su pago con Bold…"; render();
   try{ const j=await window.GC_req("GET","/api/bold/volver?ref="+encodeURIComponent(ref));
-    S.boldMsg = j.ok && j.ia ? `Pago confirmado. El paquete de inteligencia artificial quedó activo${j.iaHasta?" hasta el "+fechaPago(j.iaHasta):""}.` : j.ok && j.paidUntil ? `Pago confirmado. Su empresa quedó al día hasta el ${fechaPago(j.paidUntil)}.` : (j.msg||"Bold todavía no confirma el pago. En unos minutos se aplica solo; no tiene que hacer nada más.");
-    if(j.ok&&(j.paidUntil||j.ia)){ try{ localStorage.removeItem("gc-bold-order"); }catch{} S.iaEstado=null; setTimeout(()=>location.reload(), 2500); }
+    S.boldMsg = j.ok && j.planLabel ? `Pago confirmado. Su empresa ya tiene el plan ${j.planLabel}.` : j.ok && j.ia ? `Pago confirmado. El paquete de inteligencia artificial quedó activo${j.iaHasta?" hasta el "+fechaPago(j.iaHasta):""}.` : j.ok && j.paidUntil ? `Pago confirmado. Su empresa quedó al día hasta el ${fechaPago(j.paidUntil)}.` : (j.msg||"Bold todavía no confirma el pago. En unos minutos se aplica solo; no tiene que hacer nada más.");
+    if(j.ok&&(j.paidUntil||j.ia||j.planLabel)){ try{ localStorage.removeItem("gc-bold-order"); }catch{} S.iaEstado=null; setTimeout(()=>location.reload(), 2500); }
   }catch{ S.boldMsg="No pudimos revisar el pago en este momento. Si Bold lo aprobó, se aplica solo en unos minutos."; }
   render();
 }
@@ -2595,7 +2646,7 @@ function syncTenantStats(){
 }
 function healthOf(t){
   const s=t.stats; if(!s) return ["Sin datos","chip"];
-  const days=(Date.now()-(s.lastAct||0))/DAY, use=(s.conv||0)/((PLANS[t.plan]||PLANS.pro).maxConv);
+  const days=(Date.now()-(s.lastAct||0))/DAY, use=(s.conv||0)>0?1:0;
   let score=100; if(days>7) score-=40; if(days>21) score-=30; if(!s.kb) score-=15; if(!s.conns) score-=15; if(use<0.02) score-=10; const debt=tenantDebt(t.id); if(debt.late>0) score-=20;
   return score>=70?["Saludable","st-ganado"]:score>=40?["Atención","due"]:["En riesgo","hand"];
 }
