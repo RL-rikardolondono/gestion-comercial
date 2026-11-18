@@ -38,8 +38,12 @@ function canWrite(u, path, data) {
   if (sub === "sedes") return ADMIN.includes(u.role);
   return ["leads", "appts", "audit", "usage", "locks"].includes(sub);
 }
+// El asesor solo ve y trabaja sus prospectos asignados y los que están libres (también en el servidor, no solo en la pantalla)
+const LEADS_RE = /^tenants\/[^/]+\/leads(\/[^/]+)?$/;
+const ajeno = (u, path, data) => !!u && !u.staff && u.role === "asesor" && LEADS_RE.test(path) && !!data && !!data.owner && data.owner !== u.id;
 const filterList = (u, colPath, docs) => {
   if (u.staff) return docs;
+  if (u.role === "asesor" && LEADS_RE.test(colPath)) return docs.filter((d) => !ajeno(u, colPath + "/" + d.id, d.data));
   if (colPath === "tenants") return docs.filter((d) => d.id === u.tid);
   if (colPath === "billing" || colPath === "tickets" || colPath === "boldpagos") return docs.filter((d) => d.data && d.data.tid === u.tid);
   return docs;
@@ -63,6 +67,8 @@ const onWrite = (fn) => hooks.push(fn);
 async function guardedWrite(u, path, data) {
   const s = seg(path);
   const prev = await db.getDoc(path);
+  // El asesor no modifica prospectos asignados a otro asesor
+  if (prev.exists && ajeno(u, path, prev.data)) throw Object.assign(new Error("Ese prospecto está asignado a otro asesor."), { status: 403 });
   // Un soporte solo lo puede modificar la empresa que lo creó
   if (s[0] === "tickets" && !u.staff && prev.exists && prev.data.tid !== u.tid) throw Object.assign(new Error("No permitido"), { status: 403 });
   // Logo: solo una imagen en datos (png, jpg, webp o gif; sin SVG), para que nadie pueda meter código en la pantalla de otros
@@ -74,12 +80,6 @@ async function guardedWrite(u, path, data) {
     const BILL = ["paidUntil", "trialUntil", "paidOnce", "lastPay", "credit", "sedes", "sedesPeak", "ia", "interna", "planNext", "planNextDesde", "planLog"]; /* ia: créditos de IA, solo los pone el pago de Bold */
     if (prev.exists) { for (const k of BILL) { if (k in prev.data) data[k] = prev.data[k]; else delete data[k]; } }
     else { for (const k of BILL) delete data[k]; if (u.staff) data.trialUntil = require("./cobro").addD(require("./cobro").HOY(), 14); }
-  }
-  // Bajar de plan: primero hay que dejar los usuarios activos dentro del límite del plan nuevo
-  if (s[0] === "tenants" && s.length === 2 && u.staff && prev.exists && data.plan && data.plan !== prev.data.plan) {
-    const MAXU = { basico: 2, pro: 5, empresarial: 50 }; const lim = MAXU[data.plan] || 5;
-    const act = (await db.listCol(`tenants/${s[1]}/users`)).filter((x) => x.data.active !== false).length;
-    if (act > lim) throw Object.assign(new Error(`Antes de cambiar a ese plan hay que desactivar ${act - lim} usuario(s): el plan permite ${lim} y la empresa tiene ${act} activos.`), { status: 400 });
   }
   if (s[0] === "tenants" && s.length === 2 && !u.staff) {
     if (!prev.exists) throw Object.assign(new Error("No permitido"), { status: 403 });
@@ -160,6 +160,7 @@ function router() {
     const d = await db.getDoc(p);
     d.v = d.exists ? d.version + ":" + d.updatedAt : "del"; db.mem.doc.set(p, d.v);
     if (d.exists && !req.user.staff && ["billing", "tickets", "boldpagos"].includes(seg(p)[0]) && d.data.tid !== req.user.tid) return res.json({ exists: false, v: "x" });
+    if (d.exists && ajeno(req.user, p, d.data)) return res.json({ exists: false, v: "x" });
     res.json(d);
   });
   r.put("/doc", async (req, res) => {
@@ -198,6 +199,7 @@ function router() {
       const x = await db.getDoc(p); x.v = x.exists ? x.version + ":" + x.updatedAt : "del"; db.mem.doc.set(p, x.v);
       if (x.v === d.v) continue;
       if (x.exists && !req.user.staff && ["billing", "tickets", "boldpagos"].includes(seg(p)[0]) && x.data.tid !== req.user.tid) { out.docs.push({ path: p, exists: false, v: "x" }); continue; }
+      if (x.exists && ajeno(req.user, p, x.data)) { out.docs.push({ path: p, exists: false, v: "x" }); continue; }
       out.docs.push({ path: p, ...x });
     }
     for (const c of (Array.isArray(b.cols) ? b.cols : []).slice(0, 40)) {
@@ -211,7 +213,8 @@ function router() {
       if (since && desde > db.mem.boot && t0 - since < db.DEL_WINDOW - 60000 && desde > (db.mem.delsCut.get(p) || 0) && !compartida) {
         const ch = await db.listColSince(p, desde);
         if (!rev) { db.bumpCol(p); rev = db.mem.col.get(p); }
-        out.cols.push({ path: p, rev, t: t0, delta: true, docs: filterList(req.user, p, ch), gone: db.delsSince(p, desde) });
+        const vis = filterList(req.user, p, ch), fuera = ch.filter((d) => !vis.includes(d)).map((d) => d.id); // reasignados a otro asesor: salen de su lista
+        out.cols.push({ path: p, rev, t: t0, delta: true, docs: vis, gone: [...db.delsSince(p, desde), ...fuera] });
       } else {
         const list = await db.listCol(p);
         if (!rev) { db.bumpCol(p); rev = db.mem.col.get(p); }

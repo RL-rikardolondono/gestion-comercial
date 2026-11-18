@@ -25,7 +25,7 @@ async function genMonth(now = Date.now(), force = false) {
   const pricing = { ...PRICE, ...(st.pricing || {}) };
   const bills = (await db.listCol("billing")).map((x) => x.data);
   let n = Math.max(0, ...bills.map((b) => Number(String(b.number || "").match(/(\d+)\s*$/)?.[1]) || 0)) + 1, c = 0;
-  const [y, m] = per.split("-").map(Number); const dueDay = 4; // último día para pagar: el día 5 sin pago se cierra
+  const [y, m] = per.split("-").map(Number); const dueDay = 4; // último día para pagar sin aviso: del día 5 al 9 aviso rojo y el día 10 se cierra
   for (const x of await db.listCol("tenants")) {
     const t = x.data; if (t.status !== "activo" || t.demo || t.interna) continue; // las empresas internas no pagan
     if (bills.some((b) => b.tid === x.id && b.period === per && b.kind === "mensualidad")) continue;
@@ -187,6 +187,7 @@ async function trialMorning(now = Date.now()) {
   if (await db.kvGet(k)) return; await db.kvSet(k, now);
   await trialMails(now);
 }
+const fechaLarga = (f) => new Date(f + "T12:00:00Z").toLocaleDateString("es-CO", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 async function trialMails(now) {
   const ch = require("./channels"); if (!ch.mailOn()) return;
   const hoy = cobro.HOY();
@@ -194,11 +195,12 @@ async function trialMails(now) {
     const t = x.data; if (t.demo || t.status === "suspendido") continue;
     const e = cobro.estado(t, hoy);
     if (e.k !== "prueba" && !(e.prueba && e.cierre === hoy)) continue;
+    if (e.k === "prueba" && ![7, 3, 1].includes(e.dias)) continue; // avisos a 7, 3 y 1 día (no un correo diario)
     const users = (await db.listCol(`tenants/${x.id}/users`)).map((u) => u.data).filter((u) => u.role === "admin" && u.active !== false && u.email);
     const txt = e.k === "prueba"
-      ? `Hola, ${t.name}. ${e.dias === 1 ? "Hoy es el último día" : `Le quedan ${e.dias} días`} de la prueba gratis de Agente-IA (termina el ${e.hasta}).\nPara seguir sin interrupciones, entre a la app y pague la mensualidad en línea (tarjeta, PSE, Nequi o llave Bre-B). Su primera mensualidad empieza a contar al terminar la prueba, así que no pierde ningún día.`
+      ? `Hola, ${t.name}. ${e.dias === 1 ? "Hoy es el último día" : `Le quedan ${e.dias} días`} de la prueba gratis de Agente-IA (termina el ${fechaLarga(e.hasta)}).\nPara seguir sin interrupciones, entre a la app y pague la mensualidad en línea (tarjeta, PSE, Nequi o llave Bre-B). Su primera mensualidad empieza a contar al terminar la prueba, así que no pierde ningún día.`
       : `Hola, ${t.name}. La prueba gratis de Agente-IA terminó y el acceso quedó cerrado. Para reactivarlo, entre a la app y pague la mensualidad en línea: se reabre en el momento en que Bold confirma el pago.`;
-    for (const u of users) { try { await ch.sendEmail(u.email, e.k === "prueba" ? `Agente-IA · ${e.dias === 1 ? "último día" : e.dias + " días"} de prueba gratis` : "Agente-IA · terminó su prueba gratis", txt, { sistema: true }); } catch {} }
+    for (const u of users) { try { await ch.sendEmail(u.email, e.k === "prueba" ? `Agente-IA · ${e.dias === 1 ? "hoy es el último día" : "le quedan " + e.dias + " días"} de prueba gratis` : "Agente-IA · terminó su prueba gratis", txt, { sistema: true }); } catch {} }
   }
 }
 async function daily(now = Date.now()) {
@@ -230,4 +232,4 @@ async function findArchived(tid, key, phone) {
   await db.delDoc(r.rows[0].path);
   return { ...l, id };
 }
-module.exports = { liberar, trialMorning, genMonth, applyBold, parsePlan, feeOf, sedesOf, archiveTenant, daily, findArchived, monthKey };
+module.exports = { liberar, trialMorning, trialMails, genMonth, applyBold, parsePlan, feeOf, sedesOf, archiveTenant, daily, findArchived, monthKey };

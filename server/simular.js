@@ -1,6 +1,6 @@
 // Simulación de 3 años de servicio con reloj acelerado (solo para pruebas; usa una base de datos local).
 //   DATABASE_URL=postgres://... node server/simular.js [semilla]
-// Crea varias empresas, recibe conversaciones todos los días, genera cobros, pagos con Bold (sistema central simulado), cierres el día 5,
+// Crea varias empresas, recibe conversaciones todos los días, genera cobros, pagos con Bold (sistema central simulado), avisos del día 5 al 9 y cierres el día 10,
 // y corre el motor como lo haría el servidor. Revisa reglas y mide tamaño y velocidad mes a mes.
 const RealDate = Date; const rn = RealDate.now.bind(RealDate); let OFF = 0;
 class FDate extends RealDate { constructor(...a) { if (a.length === 0) super(rn() + OFF); else super(...a); } static now() { return rn() + OFF; } }
@@ -175,13 +175,13 @@ const mk = (ts) => { const l = local(ts); return `${l.y}-${String(l.m + 1).padSt
     if (L.d === 15) { setTime(day0 + 8 * 3600e3); await call(null, "POST", `/api/public/${T[0].id}/form`, { name: "Cliente fijo " + d, phone: "3109" + String(d).padStart(6, "0"), consent: true }); }
     // Motor: varias veces al día (como el despertador)
     for (const h of [7.5, 12, 19.5, 21]) { setTime(day0 + (h - 7) * 3600e3); const a = rn(); try { await engine.tick(null, true); } catch (e) { bad("motor: " + e.message); } tickMs.push(rn() - a); }
-    // Revisión de la regla de cobro: el día 5 sin pago debe estar cerrada (y abierta del 1 al 4)
-    if (L.d === 5 || L.d === 4) for (const t of T) if (t.on) {
+    // Revisión de la regla de cobro: el día 10 sin pago debe estar cerrada (y abierta del 1 al 9, con aviso del 5 al 9)
+    if (L.d === 10 || L.d === 9) for (const t of T) if (t.on) {
       const tn = (await call(P, "GET", "/api/doc?path=tenants/" + t.id)).b.data; const st = cobro.estado(tn);
       const bills = (await call(P, "GET", "/api/col?path=billing")).b.docs.map((x) => x.data).filter((b) => b.tid === t.id && b.period === mk(day0));
       const unpaid = bills.some((b) => b.amount > (b.payments || []).reduce((s, p) => s + p.amount, 0));
-      if (L.d === 5 && tn.paidUntil && tn.paidUntil < mk(day0) + "-01" && st.k !== "cerrada") bad(`${t.name}: debía estar cerrada el día 5 (pagado hasta ${tn.paidUntil})`);
-      if (L.d === 4 && tn.paidUntil && tn.paidUntil >= cobro.addD(mk(day0) + "-01", -1) && st.k === "cerrada") bad(`${t.name}: se cerró antes del día 5 (pagado hasta ${tn.paidUntil})`);
+      if (L.d === 10 && tn.paidUntil && tn.paidUntil < mk(day0) + "-01" && st.k !== "cerrada") bad(`${t.name}: debía estar cerrada el día 10 (pagado hasta ${tn.paidUntil})`);
+      if (L.d === 9 && tn.paidUntil && tn.paidUntil >= cobro.addD(mk(day0) + "-01", -1) && st.k === "cerrada") bad(`${t.name}: se cerró antes del día 10 (pagado hasta ${tn.paidUntil})`);
       if (tn.paidUntil >= cobro.HOY() && st.k === "cerrada") bad(`${t.name}: pagó pero sigue cerrada (pagado hasta ${tn.paidUntil})`);
       const w = await call(tok[t.id], "PUT", "/api/doc", { path: `tenants/${t.id}/leads/prueba-cierre`, data: { name: "x", messages: [] } });
       if (st.k === "cerrada" && w.s !== 402) bad(`${t.name}: cerrada pero pudo guardar (${w.s})`);

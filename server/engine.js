@@ -20,8 +20,11 @@ const cop = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("es-CO");
 const CORREO = require("./correo");
 const uid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const norm = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-const fdt = (ts) => new Date(ts).toLocaleString("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
-const fdate = (ts) => new Date(ts).toLocaleDateString("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "short", year: "numeric" });
+// Formateadores creados una sola vez (crear uno en cada llamada gasta memoria en el servidor)
+const F_DT = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", weekday: "long", day: "numeric", month: "long", hour: "numeric", minute: "2-digit" });
+const F_D = new Intl.DateTimeFormat("es-CO", { timeZone: "America/Bogota", day: "numeric", month: "short", year: "numeric" });
+const fdt = (ts) => F_DT.format(new Date(ts));
+const fdate = (ts) => F_D.format(new Date(ts));
 
 const PLAN_FEATS = { basico: ["autoReply"], pro: ["autoReply", "followup", "collect", "care", "ia"], empresarial: ["autoReply", "followup", "collect", "care", "ia", "sedes", "reports", "api"] };
 const STAGE_ORDER = { nuevo: 0, contactado: 1, interesado: 2, propuesta: 3, ganado: 4, perdido: 5 };
@@ -70,7 +73,7 @@ const saveAppt = (ctx, a) => { const b = { ...a }; delete b.id; b.updatedAt = Da
 /* ---------- horario, agenda y textos ---------- */
 const hm = (s) => { const [h, m] = String(s).split(":").map(Number); return (h || 0) * 60 + (m || 0); };
 function isOpen(ctx, ts) { const l = local(ts); const r = ctx.biz.hours[l.wd] || []; const mins = l.h * 60 + l.mi; return !isHoliday(ts) && r.some(([a, b]) => mins >= hm(a) && mins < hm(b)); }
-function nextOpen(ctx, ts) { for (let i = 0; i < 14 * 48; i++) { const t = ts + i * 30 * 60000; if (isOpen(ctx, t)) return t; } return null; }
+function nextOpen(ctx, ts) { if (isOpen(ctx, ts)) return ts; const t0 = Math.ceil(ts / 1800e3) * 1800e3; for (let i = 0; i < 14 * 48; i++) { const t = t0 + i * 30 * 60000; if (isOpen(ctx, t)) return t; } return null; } // en punto o y media (no «8:18»)
 function freeSlots(ctx, n = 8) {
   const step = (Number(ctx.biz.slotMin) || 30) * 60000, out = [], now = Date.now();
   const busy = new Set(ctx.appts.filter((a) => a.status !== "cancelada").map((a) => a.at));
@@ -281,6 +284,12 @@ async function saveMarks(path, arrKey, keyOf, mine) {
 const isDemoT = (ctx) => !!(ctx.tenant && ctx.tenant.demo);
 // Las respuestas de los clientes a los correos van a la empresa (correo de atención o el de su administrador), no a SofIA
 const replyOf = (ctx) => (ctx.conns.email && ctx.conns.email.data && ctx.conns.email.data.address) || (ctx.biz.digest && /@/.test(ctx.biz.digest.to || "") && ctx.biz.digest.to) || ((ctx.users || []).find((u) => u.role === "admin" && u.active !== false && u.email) || {}).email || "";
+// Un mensaje de la conversación enviado por correo: saludo, las instrucciones del chat adaptadas al correo y firma de la empresa
+function correoTexto(ctx, l, text) {
+  const n = first(l.name), c = ctx.config;
+  const t = String(text || "").replace(/Responda con el número( que prefiera)?\./g, "Responda este correo con el número$1.").replace(/Responda (\d)\b/g, "Responda este correo con un $1");
+  return `${n ? "Hola, " + n + ":" : "Hola:"}\n\n${t}\n\nCordialmente,\n${c.assistant || "SofIA"} · ${c.company || ""}${c.phone ? "\nTeléfono: " + c.phone : ""}`;
+}
 async function dispatchLead(tid, path, l, ctx0) {
   if (!l || l.demo || l.sim || !Array.isArray(l.messages)) return;
   const now = Date.now();
@@ -303,11 +312,11 @@ async function dispatchLead(tid, path, l, ctx0) {
         if (!(await ch.cupo("posventa", tid))) { m.d = "espera: cupo de correo"; continue; }
         await ch.sendEmail(l.email, `Un saludo de ${ctx.config.company}`, m.text + "\n\nSi no desea recibir más mensajes, responda este correo con la palabra BAJA.", { replyTo: resp, tid }); m.d = "ok: correo"; }
       // El cliente escribió por correo: la respuesta sale por correo (aunque haya empezado en el chat de la página)
-      else if (mailOk && l.lastVia === "email" && !["instagram", "facebook"].includes(l.lastVia)) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Re: ${ctx.config.company}`, m.text, { replyTo: resp, tid }); m.d = "ok: correo"; }
+      else if (mailOk && l.lastVia === "email" && !["instagram", "facebook"].includes(l.lastVia)) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Re: ${ctx.config.company}`, correoTexto(ctx, l, m.text), { replyTo: resp, tid }); m.d = "ok: correo"; }
       // Chat de la página: si el cliente ya se fue (más de 30 min sin escribir) y dejó correo, el seguimiento le llega por correo
       else if (l.channel === "web" && !(mailOk && m.from === "auto" && Date.now() - (l.lastInboundAt || 0) > 30 * 60000)) m.d = "web";
       else if (l.channel === "instagram" || l.channel === "facebook") { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; }
-      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, m.text, { replyTo: resp, tid }); m.d = "ok"; }
+      else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, l.channel === "form" ? `Su solicitud en ${ctx.config.company}` : `Mensaje de ${ctx.config.company}`, correoTexto(ctx, l, m.text), { replyTo: resp, tid }); m.d = "ok"; }
       else m.d = "sin canal activo";
     } catch (e) { m.d = "error: " + String(e.message).slice(0, 120); }
     m.dAt = Date.now();
@@ -335,7 +344,7 @@ async function dispatchBilling(path, b) {
   const admins = users.map((u) => u.data).filter((u) => u.role === "admin" && u.active !== false && u.email);
   for (const r of pending) {
     const out = [];
-    for (const a of admins) { try { await ch.sendEmail(a.email, `Agente-IA · ${b.concept}`, r.text, { sistema: true }); out.push("correo"); } catch {} }
+    for (const a of admins) { try { await ch.sendEmail(a.email, asuntoCobro(b, r), r.text, { sistema: true }); out.push("correo"); } catch {} }
     r.d = out.length ? "ok: " + out.join(", ") : "sin canal (configure Brevo)";
   }
   await saveMarks(path, "reminders", (r) => String(r.at), pending);
@@ -524,11 +533,26 @@ async function runValor(ctx) {
   const r = valorTexto(ctx, desde, hasta);
   for (const e of to) { try { await ch.sendEmail(e, `${r.vacio ? "Su informe" : "Lo que Agente-IA hizo por usted"} en ${r.mes} · ${ctx.config.company}`, r.text, { tid: ctx.tid }); } catch (err) { console.error("valor mensual", ctx.tid, err.message); } }
 }
-// Avisos de mensualidad con la regla vigente: se paga hasta el día 4; el día 5 sin pago se cierra (sin cuenta regresiva)
+// Avisos de mensualidad (regla general): disponible el día 1, se paga hasta el día 4; del día 5 al 9 un aviso diario
+// con cuenta regresiva (5, 4, 3, 2, 1 días) y el día 10 se cierra el acceso
 const PAGO_TXT = "Pague en línea desde Agente-IA con todos los medios de pago (tarjeta débito o crédito, PSE, Nequi, llave Bre-B).";
 const BILL_STEPS = [
-  { offset: -3, text: "Hola {empresa}, ya está disponible su mensualidad de Agente-IA de {periodo} por {saldo}. Puede pagarla hasta el {vence}; si el día 5 no se ha pagado, el acceso se cierra. {pago}" },
-  { offset: 1, text: "{empresa}, el acceso a Agente-IA quedó cerrado por la mensualidad pendiente de {periodo} ({saldo}). Sus datos se conservan. {pago} Se reabre en el momento en que se confirma el pago." }];
+  { offset: -3, text: "Hola {empresa}, ya está disponible su mensualidad de Agente-IA de {periodo} por {saldo}. Puede pagarla hasta el {vence}. Desde el día 5 verá un aviso y, si no se ha pagado, el {cierre} se cierra el acceso. {pago}" },
+  { offset: 1, text: "{empresa}, su mensualidad de Agente-IA de {periodo} ({saldo}) sigue sin pagar. Quedan 5 días: si no se paga, el {cierre} se cierra el acceso y SofIA deja de responderles a sus clientes. {pago}" },
+  { offset: 2, text: "{empresa}, quedan 4 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}" },
+  { offset: 3, text: "{empresa}, quedan 3 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}" },
+  { offset: 4, text: "{empresa}, quedan 2 días para pagar la mensualidad de Agente-IA de {periodo} ({saldo}). El {cierre} se cierra el acceso si no se ha pagado. {pago}" },
+  { offset: 5, text: "{empresa}, mañana ({cierre}) se cierra el acceso a Agente-IA si no se paga la mensualidad de {periodo} ({saldo}). {pago}" },
+  { offset: 6, text: "{empresa}, el acceso a Agente-IA quedó cerrado por la mensualidad pendiente de {periodo} ({saldo}). Sus datos se conservan. {pago} Se reabre en el momento en que se confirma el pago." }];
+// Asunto del correo de cobro según el aviso (para que se note la urgencia sin abrirlo)
+function asuntoCobro(b, r) {
+  const t = String(r.text || ""), q = (t.match(/quedan (\d) días/) || [])[1];
+  if (/quedó cerrado/.test(t)) return "Agente-IA · el acceso quedó cerrado por la mensualidad pendiente";
+  if (/mañana .*se cierra/i.test(t)) return "Agente-IA · mañana se cierra el acceso: pague la mensualidad";
+  if (q) return `Agente-IA · quedan ${q} días para pagar la mensualidad`;
+  if (/Quedan 5 días/.test(t)) return "Agente-IA · quedan 5 días para pagar la mensualidad";
+  return `Agente-IA · ${b.concept || "su mensualidad"} disponible`;
+}
 async function runBilling() {
   const s = await db.getDoc("platform/settings"); const bc = (s.exists && s.data.billing) || {};
   if (bc.enabled === false) return;
@@ -542,7 +566,7 @@ async function runBilling() {
     while (k + 1 < steps.length && b.dueAt + (Number(steps[k + 1].offset) || 0) * DAY <= Date.now()) k++;
     if ((b.reminders || []).some((r) => dayKey(r.at) === dayKey(Date.now()))) continue;
     const tpl = b.period ? String(steps[k].text) : String(steps[k].text).replace(/mensualidad de Agente-IA de \{periodo\}|mensualidad de \{periodo\}/g, "pago de {periodo}");
-    const text = tpl.replaceAll("{empresa}", b.tenantName || "").replaceAll("{periodo}", b.period ? MES(b.period) : b.concept || "").replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{numero}", b.number || "").replaceAll("{pago}", PAGO_TXT).replace(/\s+/g, " ").trim();
+    const text = tpl.replaceAll("{empresa}", b.tenantName || "").replaceAll("{periodo}", b.period ? MES(b.period) : b.concept || "").replaceAll("{saldo}", cop(balOf(b))).replaceAll("{valor}", cop(b.amount)).replaceAll("{vence}", fdate(b.dueAt)).replaceAll("{cierre}", fdate(b.dueAt + 6 * DAY)).replaceAll("{numero}", b.number || "").replaceAll("{pago}", PAGO_TXT).replace(/\s+/g, " ").trim();
     b.reminders = [...(b.reminders || []), { at: Date.now(), text, step: k + 1, auto: true }].slice(-30);
     b.sent = [...new Set([...sent, ...Array.from({ length: k + 1 }, (_, i) => i)])];
     await docs.guardedWrite(SYSTEM, "billing/" + x.id, b);

@@ -8,7 +8,6 @@
 const db = require("./db");
 const cobro = require("./cobro");
 const mant = require("./mantenimiento");
-const MAXU = { basico: 2, pro: 5, empresarial: 50 };
 const LABEL = { basico: "Básico", pro: "Profesional", empresarial: "Empresarial" };
 const ORDEN = { basico: 1, pro: 2, empresarial: 3 };
 const DAY = 864e5;
@@ -30,18 +29,16 @@ function modo(t) {
   return "pagado";
 }
 const MSG_DEBE = "Primero pague la mensualidad de este mes (ya está generada con su plan actual). Apenas quede al día, puede cambiar de plan aquí mismo.";
-async function usuariosActivos(tid) { return (await db.listCol(`tenants/${tid}/users`)).filter((x) => x.data.active !== false).length; }
 
 function routes(app) {
   // Lo que pasaría al cambiar a cada plan (para mostrarlo antes de confirmar)
   app.get("/api/plan/opciones", async (req, res) => {
     const u = req.user; if (u.staff || u.role !== "admin") return res.status(403).json({ error: "Solo el administrador de la empresa cambia el plan." });
     const t = await db.getDoc("tenants/" + u.tid); if (!t.exists) return res.status(404).json({ error: "Empresa no encontrada." });
-    const m = modo(t.data), act = await usuariosActivos(u.tid), out = {};
+    const m = modo(t.data), out = {};
     for (const k of Object.keys(ORDEN)) {
       if (k === t.data.plan) continue;
       const o = { plan: k, label: LABEL[k], precio: await mant.feeOf({ ...t.data, plan: k }, u.tid) };
-      if (act > MAXU[k]) o.bloqueo = `Primero desactive ${act - MAXU[k]} usuario(s): el plan ${LABEL[k]} permite ${MAXU[k]} y su empresa tiene ${act} activos.`;
       if (m === "debe") o.bloqueo = MSG_DEBE;
       else if (m === "libre") o.como = "inmediato";
       else if (ORDEN[k] > ORDEN[t.data.plan]) { const d = await diferencia(t.data, u.tid, k); o.como = d.dif >= 1000 ? "pagar" : "inmediato"; o.dif = d.dif; o.dias = d.dias; }
@@ -61,8 +58,6 @@ function routes(app) {
       if (!t.data.planNext) return res.status(400).json({ error: "Ese ya es su plan." });
       await db.patchDoc("tenants/" + tid, { planNext: null, planNextDesde: null }); return res.json({ ok: true, cancelado: true });
     }
-    const act = await usuariosActivos(tid);
-    if (act > MAXU[nuevo]) return res.status(400).json({ error: `Primero desactive ${act - MAXU[nuevo]} usuario(s) en Usuarios: el plan ${LABEL[nuevo]} permite ${MAXU[nuevo]} y su empresa tiene ${act} activos.` });
     const m = modo(t.data), log = { at: Date.now(), by: u.id, de: t.data.plan, a: nuevo };
     if (m === "debe") return res.status(400).json({ error: MSG_DEBE });
     if (m === "libre") {

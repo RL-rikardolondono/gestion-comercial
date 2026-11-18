@@ -18,17 +18,26 @@
     ubicacion: ["donde", "direccion", "ubica*", "llegar", "sede*", "queda*", "barrio"],
     pago: ["pago*", "pagar", "nequi", "daviplata", "tarjeta*", "transferencia*", "efectivo", "credito", "cuota*", "financ*", "pse"],
     gracias: ["gracias", "muy amable", "perfecto", "listo"],
+    info: ["informacion", "info", "detalles", "me interesa", "mas datos", "quiero saber"],
     saludo: ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "saludos"],
   };
   const MENU_KEYS = { 1: "precio", 2: "horario", 3: "cita", 4: "human" };
 
+  const L = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ";
+  const CORTE = /\b(mi|y|con|de cel|celular|cel|correo|email|whatsapp|telefono|teléfono|numero|número|quiero|necesito|para)\b/i;
+  const capital = (s) => s.toLowerCase().replace(new RegExp("(^|\\s)([" + L + "])", "g"), (m, a, c) => a + c.toUpperCase());
+  function limpiarNombre(s) {
+    let x = String(s || "").split(/[,;:\d@(]/)[0]; const k = x.search(CORTE); if (k > 0) x = x.slice(0, k);
+    x = x.replace(/[^\s' + "" + '-]/g, (c) => (new RegExp("[" + L + "]").test(c) ? c : " ")).replace(/\s+/g, " ").trim();
+    const w = x.split(" ").filter(Boolean); return w.length >= 1 && w.length <= 4 && w.every((p) => p.length >= 2) ? capital(w.join(" ")) : "";
+  }
   function extract(text) {
     const out = {};
     const em = String(text).match(/[\w.+-]+@[\w-]+\.[\w.-]+/); if (em) out.email = em[0];
     const ph = String(text).replace(/[\s.-]/g, "").match(/(\+?57)?3\d{9}\b/); if (ph) out.phone = ph[0];
-    const nm = String(text).match(/(?:me llamo|mi nombre es|habla|le escribe)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ]+)?)/i)
-      || String(text).match(/\bsoy\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)?)/);
-    if (nm) out.name = nm[1].replace(/\b\w/g, (c) => c.toUpperCase());
+    const nm = String(text).match(new RegExp("(?:me llamo|mi nombre es|le habla|habla|le escribe)\\s+([" + L + " ]+)", "i"))
+      || String(text).match(new RegExp("(?:^|\\s)[Ss]oy\\s+([A-ZÁÉÍÓÚÑ][" + L + "]+(?:\\s+[A-ZÁÉÍÓÚÑ][" + L + "]+){0,3})"));
+    if (nm) { const n = limpiarNombre(nm[1]); if (n) out.name = n; }
     return out;
   }
   function bestFaq(c, text) {
@@ -57,7 +66,7 @@
     if (ex.name && !lead.name) r.name = ex.name;
     if (ex.phone && !lead.phone) r.phone = ex.phone;
     if (ex.email && !lead.email) r.email = ex.email;
-    const menu = `Puedo ayudarle con:\n1. Servicios y precios\n2. Horario y ubicación\n3. Agendar una cita\n4. Hablar con un asesor\nResponda con el número.`;
+    const menu = `Puedo ayudarle con:\n1. Servicios y precios\n2. Horario y ubicación\n${c.agendaOn ? "3. Agendar una cita\n" : ""}4. Hablar con un asesor\nResponda con el número.`;
     const num = (nt.match(/^(?:opcion |la |el |numero )?([1-9])$/) || [])[1];
     const ordinal = { primer: 1, primera: 1, segund: 2, tercer: 3 }; let ord = null;
     for (const [k, v] of Object.entries(ordinal)) if (new RegExp("\\b" + k).test(nt)) ord = v;
@@ -73,13 +82,13 @@
     }
     // 2. Respuesta al menú
     let intent = null;
-    if (num && st.menu && MENU_KEYS[num]) intent = MENU_KEYS[num];
+    if (num && st.menu && MENU_KEYS[num] && !(num === "3" && !c.agendaOn)) intent = MENU_KEYS[num];
     // 3. Nombre cuando se le pidió
     // Frases como «Quiero inscribirme» o «Necesito información» no son nombres
     const NO_NOMBRE = /^(quiero|quisiera|necesito|busco|deseo|tengo|me|hola|buenas|buenos|buen|como|cuanto|cuanta|cual|que|donde|cuando|informacion|info|si|no|ok|vale|gracias|por|para|el|la|los|las|un|una|mi|yo|soy|estoy|puedo|pueden|ayuda|precio|precios|valor|horario|cita|inscribirme|matricula)$/;
-    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúñ]+( [a-záéíóúñ]+){0,2}$/i.test(String(text).trim()) && !NO_NOMBRE.test(nt.split(" ")[0]) && !has(nt, [].concat(...Object.values(INTENTS)))) {
-      r.name = String(text).trim().replace(/\b\w/g, (x) => x.toUpperCase()); st.askedName = false;
-      r.reply = `Mucho gusto, ${r.name.split(" ")[0]}. ${menu}`; st.menu = true; return r;
+    // (también «Ana Pérez, 300 123 4567» o «Ana Pérez 300 123 4567»: el nombre es lo que va antes del número o la coma)
+    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúüñ]/i.test(String(text).trim()) && !NO_NOMBRE.test(nt.split(" ")[0]) && !has(nt, [].concat(...Object.values(INTENTS)))) {
+      const n = limpiarNombre(text); if (n) r.name = n;
     }
     // 4. Intención por palabras clave y base de conocimiento
     const faq = bestFaq(c, text);
@@ -94,13 +103,26 @@
       else if (has(nt, INTENTS.pago)) intent = "pago";
       else if (faq && faq.s >= 1 && faq.score >= 0.34) intent = "faq";
       else if (has(nt, INTENTS.gracias)) intent = "gracias";
+      else if (has(nt, INTENTS.info)) intent = "info";
       else if (has(nt, INTENTS.saludo) || nt.length < 3) intent = "saludo";
     }
+    // Solo datos de contacto (nombre, celular o correo): se agradecen, no se tratan como pregunta sin respuesta
+    if ((!intent || intent === "saludo") && (r.name || r.phone || r.email)) intent = "datos";
     const item = catalogHit(c, text);
     if (item && !lead.interest) r.interest = item.n;
+    const nombre1 = String(lead.name || r.name || "").split(" ")[0];
     switch (intent) {
+      case "datos": {
+        st.askedName = false;
+        const quedo = [r.name ? "su nombre" : "", r.phone ? "su celular" : "", r.email ? "su correo" : ""].filter(Boolean);
+        r.reply = `Gracias${nombre1 ? ", " + nombre1 : ""}. Ya quedó registrado ${quedo.length > 1 ? quedo.slice(0, -1).join(", ") + " y " + quedo.slice(-1) : quedo[0] || "todo"}.`;
+        if (st.slots && st.slots.length) r.reply += `\nPara su cita tengo estos espacios:\n${st.slots.map((t, i) => `${i + 1}. ${c.fmt(t)}`).join("\n")}\nResponda con el número que prefiera.`;
+        else if (lead.handoff) r.reply += " Un asesor le escribirá" + (c.openNow ? " en breve." : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos") + ".");
+        else { r.reply += ` ${menu}`; st.menu = true; }
+        r.score += 5; break;
+      }
       case "human":
-        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText || "apenas abramos")}.`; break;
+        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}.`; break;
       case "faq":
         r.reply = faq.f.a; r.score += 10; r.stage = "interesado"; if (!lead.interest) r.interest = String(faq.f.q).replace(/[¿?]/g, "").slice(0, 60); break;
       case "cita": {
@@ -117,14 +139,14 @@
         else if ((c.catalog || []).filter((x) => x.n).length) r.reply = `Estos son nuestros precios:\n${c.catalog.filter((x) => x.n).slice(0, 8).map((x) => `• ${x.n}: ${cop(x.p)}`).join("\n")}`;
         else if (c.services && String(c.services).split("\n").some((x) => x.trim() && !/(\$|desde)\s*$/i.test(x.trim()))) r.reply = String(c.services).split("\n").filter((x) => !/\$\s*$/.test(x.trim()) && !/\$\s+y\b/.test(x)).join("\n").slice(0, 700); // sin las líneas de ejemplo con precio vacío
         else { r.handoff = true; r.reply = "Un asesor le compartirá los precios en breve."; }
-        if (!r.handoff) r.reply += "\n¿Desea agendar una cita? Responda 3.";
+        if (!r.handoff) r.reply += c.agendaOn ? "\n¿Desea agendar una cita? Responda 3." : "\n¿Le ayudo con algo más? Responda 4 para hablar con un asesor.";
         st.menu = true; r.score += 15; r.stage = "interesado"; break;
       case "horario": {
         const sedes = (c.sedes || []).filter((x) => x.hours).map((x) => `• ${x.name}: ${x.hours}`).join("\n");
         r.reply = (c.hoursText ? `Nuestro horario es: ${String(c.hoursText).replace(/\.$/, "")}.` : "Le comparto nuestro horario de atención.") + (sedes ? `\n${sedes}` : "");
         const addr = lineOf(c.extra, /direccion|calle|carrera|cra|avenida|av /);
         if (addr && !sedes) r.reply += `\n${addr.trim()}`;
-        r.reply += "\n¿Le ayudo con algo más? Responda 1 para precios o 3 para agendar."; st.menu = true; break;
+        r.reply += c.agendaOn ? "\n¿Le ayudo con algo más? Responda 1 para precios o 3 para agendar." : "\n¿Le ayudo con algo más? Responda 1 para precios o 4 para hablar con un asesor."; st.menu = true; break;
       }
       case "ubicacion": {
         const sedes = (c.sedes || []).filter((x) => x.address).map((x) => `• ${x.name}: ${x.address}`).join("\n");
@@ -137,17 +159,20 @@
         r.reply = p ? String(p).trim() : "Un asesor le explicará los medios de pago."; if (!p) r.handoff = true;
         if (c.payLink) r.reply += `\nTambién puede pagar en línea aquí: ${c.payLink}`; break;
       }
+      case "info":
+        r.reply = `Con mucho gusto le doy la información. ${menu}`; st.menu = true; r.score += 5; break;
       case "gracias":
         r.reply = `Con mucho gusto. Si necesita algo más, aquí estamos. ${c.company}.`; st.menu = false; break;
       case "saludo":
         r.reply = `Hola, soy ${c.assistant || "el asistente"} de ${c.company}. ${menu}`; st.menu = true; break;
       default:
         r.unknown = String(text).slice(0, 200); r.handoff = true;
-        r.reply = `Esa pregunta se la responde mejor un asesor; ya le aviso para que le escriba${c.openNow ? "" : " " + (c.nextOpenText || "apenas abramos")}. Mientras tanto, ${menu.charAt(0).toLowerCase() + menu.slice(1)}`; st.menu = true;
+        r.reply = `Esa pregunta se la responde mejor un asesor; ya le aviso para que le escriba${c.openNow ? "" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}. Mientras tanto, ${menu.charAt(0).toLowerCase() + menu.slice(1)}`; st.menu = true;
     }
     if (!lead.name && !r.name && !st.askedName && intent !== "human" && !r.book) { r.reply += "\n¿Me regala su nombre, por favor?"; st.askedName = true; }
     // Ya con el nombre, se pide un correo o celular: así el seguimiento le llega aunque no vuelva a la página
     else if ((lead.name || r.name) && !lead.phone && !lead.email && !r.phone && !r.email && !st.askedContact && intent !== "human" && !r.book) { r.reply += "\n¿Me deja su correo o su celular para enviarle la información y hacerle seguimiento?"; st.askedContact = true; }
+    r.reply = r.reply.replace(/([ap])\. m\.\./g, "$1. m."); // «8:00 a. m..» → «8:00 a. m.»
     if (r.name || r.phone || r.email) r.score += 10;
     r.score = Math.max(0, Math.min(100, r.score));
     return r;

@@ -154,10 +154,11 @@ const ok = (c, msg) => { console.log((c ? "✔ " : "✘ ") + msg); if (!c) proce
   ok((await call(P, "GET", "/api/doc?path=tenants/t1")).b.data.ia.left === 500, "la empresa no puede darse respuestas de IA gratis");
   const IE = await call(A, "GET", "/api/ia/estado");
   ok(IE.b.empresa && IE.b.empresa.left === 500 && IE.b.packs.ia6000.price === 449000, "la empresa ve su paquete y los precios");
-  // Regla: prueba de 15 días sin renovación, cierre el día 5, primer pago con el resto del mes gratis
+  // Regla: prueba de 15 días sin renovación, aviso del día 5 al 9 y cierre el día 10, primer pago con el resto del mes gratis
   ok(cobro.estado({ trialUntil: cobro.addD(cobro.HOY(), 3) }).k === "prueba", "empresa nueva: en prueba gratis");
   ok(cobro.estado({ trialUntil: cobro.addD(cobro.HOY(), -1) }).k === "cerrada", "al terminar la prueba sin pago se cierra");
-  ok(cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-04").k === "activa" && cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-05").k === "cerrada", "sin pago, el día 5 se cierra (sin cuenta regresiva)");
+  { const e4 = cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-04"), e5 = cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-05"), e9 = cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-09"), e10 = cobro.estado({ paidUntil: "2026-09-30", paidOnce: true }, "2026-10-10");
+    ok(e4.k === "activa" && !e4.aviso && e5.k === "activa" && e5.aviso && e5.quedan === 5 && e9.quedan === 1 && e10.k === "cerrada", "sin pago: aviso del día 5 al 9 (5→1 días) y cierre el día 10"); }
   ok(cobro.trasPago({}, "2026-10-20") === "2026-11-30" && cobro.trasPago({}, "2026-10-03") === "2026-10-31", "primer pago: el resto del mes gratis (o solo ese mes si paga del 1 al 5)");
   ok(cobro.trasPago({ trialUntil: "2026-10-25" }, "2026-10-20") === "2026-11-30", "si paga durante la prueba, cuenta desde el día siguiente al fin de la prueba");
   ok(cobro.trasPago({ paidUntil: "2026-10-31", paidOnce: true }, "2026-10-28") === "2026-11-30", "pagando por adelantado suma un mes");

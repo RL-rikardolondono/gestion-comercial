@@ -1,6 +1,7 @@
 // Regla de cobro de SkyNet Genesis para las empresas clientes (directiva del 17 y 19 oct 2026).
-// - "Pagado hasta" (paidUntil) por empresa, siempre a fin de mes. Sin mora, sin aviso previo ni cuenta regresiva.
-// - Si no ha pagado, el día 5 del mes siguiente se CIERRA el acceso (el servidor lo aplica).
+// - "Pagado hasta" (paidUntil) por empresa, siempre a fin de mes. Sin mora ni intereses.
+// - Si no ha pagado: del día 1 al 4 la mensualidad está disponible; desde el día 5 aviso rojo con cuenta regresiva
+//   (5, 4, 3, 2, 1 días) y el día 10 se CIERRA el acceso (el servidor lo aplica). Regla general de SkyNet Genesis.
 // - Prueba gratis de 15 días (trialUntil), sin renovación: al terminar sin pago se cierra.
 // - Solo se paga con Bold de SkyNet Genesis, mes a mes. Primer pago: "resto del mes gratis".
 const HOY = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date());
@@ -24,9 +25,10 @@ function estado(t, hoy = HOY()) {
   if (ph >= hoy) return { k: "activa", hasta: ph };
   // Prueba vencida sin pago: se cierra de inmediato (la prueba no se renueva)
   if (t && t.trialUntil && !t.paidOnce && !t.paidUntil) return { k: "cerrada", hasta: ph, cierre: addD(ph, 1), prueba: true };
-  const cierre = addD(ph, 5);
+  const cierre = addD(ph, 10), aviso = addD(ph, 5);
   if (hoy >= cierre) return { k: "cerrada", hasta: ph, cierre };
-  return { k: "activa", hasta: ph, pendiente: true, cierre };
+  const quedan = Math.round((Date.parse(cierre) - Date.parse(hoy)) / 864e5);
+  return { k: "activa", hasta: ph, pendiente: true, cierre, aviso: hoy >= aviso, quedan };
 }
 const cerrada = (t) => !!t && estado(t).k === "cerrada";
 // Hasta dónde queda al día con UN pago mensual hecho hoy (lo que dice la pantalla antes de pagar)

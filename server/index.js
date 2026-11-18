@@ -33,6 +33,7 @@ app.use("/api", (req, res, next) => {
 
 // Salud: no toca la base de datos (para que Neon pueda dormir). Con ?db=1 sí la revisa.
 app.get("/salud", async (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*"); // la pantalla de ingreso lo consulta para despertar el servidor
   try { if (req.query.db) await db.pool.query("SELECT 1"); res.json({ ok: true, ia: process.env.AI_ENABLED === "true", correo: !!(process.env.BREVO_API_KEY || process.env.SMTP_URL), meta: !!process.env.META_VERIFY_TOKEN, respuestas: req.query.correo ? { webhook: !!(await db.kvGet("inbound:ok")), mx: await require("./correo").mxListo(), error: (await db.kvGet("inbound:err")) || undefined } : undefined }); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -75,7 +76,7 @@ app.post("/api/auth/reset", async (req, res) => {
 // Registro propio de una empresa desde la página de ingreso o la demostración: 15 días de prueba gratis, sin tarjeta.
 // La cuenta queda con una clave al azar y el enlace para crear la contraseña llega al correo (así se comprueba que el correo es suyo).
 const REG_PLANES = ["basico", "pro", "empresarial"];
-const REG_SECTORES = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Comercio / ferretería", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos", ""];
+const REG_SECTORES = ["Salud / IPS", "Odontología", "Colegio / educación", "Instituto técnico / cursos", "Tienda / almacén", "Comercio / ferretería", "Concesionario / vehículos", "Inmobiliaria", "Restaurante", "Taller / servicios técnicos", ""];
 const regHits = new Map();
 app.post("/api/public/registro", async (req, res) => {
   const b = req.body || {};
@@ -83,7 +84,7 @@ app.post("/api/public/registro", async (req, res) => {
   const now = Date.now(), k = req.ip, h = (regHits.get(k) || []).filter((t) => now - t < 3600e3);
   if (h.length >= 3) return res.status(429).json({ error: "Ya se crearon varias cuentas desde esta conexión. Intente más tarde o escríbanos por WhatsApp (304 437 5758)." });
   const txt = (v, n) => String(v || "").replace(/[\u0000-\u001f<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
-  const empresa = txt(b.empresa, 80), nombre = txt(b.nombre, 80), ciudad = txt(b.ciudad, 60), celular = String(b.celular || "").replace(/[^\d+]/g, "").slice(0, 15);
+  const empresa = txt(b.empresa, 120), nombre = txt(b.nombre, 80), ciudad = txt(b.ciudad, 60), celular = String(b.celular || "").replace(/[^\d+]/g, "").slice(0, 15);
   const correo = String(b.correo || "").trim().toLowerCase().slice(0, 120), plan = REG_PLANES.includes(b.plan) ? b.plan : "pro", sector = REG_SECTORES.includes(b.sector) ? b.sector : "";
   if (empresa.length < 2 || nombre.length < 3) return res.status(400).json({ error: "Escriba el nombre de la empresa y su nombre completo." });
   if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(correo)) return res.status(400).json({ error: "Escriba un correo válido: allí le llega el enlace para crear la contraseña." });
@@ -128,10 +129,10 @@ async function cerradaCache(tid) {
   return v;
 }
 const PAGO_OK = /^(tenants\/[^/]+|tenants|platform\/settings|boldpagos|billing|staff|tenants\/[^/]+\/(config\/main|config\/logo|config\/connections|users|sedes)|tenants\/[^/]+\/usage\/[\w-]+)$/;
-// Regla de cobro: el día 5 sin pago (o al terminar la prueba) la empresa queda cerrada; no puede registrar ni cambiar nada (la app muestra la pantalla de cierre)
+// Regla de cobro: el día 10 sin pago (o al terminar la prueba) la empresa queda cerrada; no puede registrar ni cambiar nada (la app muestra la pantalla de cierre)
 app.use("/api", async (req, res, next) => {
   try {
-    const u = req.user; if (!u || u.staff || !u.tid || req.path === "/auth/me" || req.path === "/auth/password" || req.path.startsWith("/bold/") || req.path.startsWith("/plan/")) return next(); // cerrada: puede cambiar de plan antes de pagar
+    const u = req.user; if (!u || u.staff || !u.tid || req.path === "/auth/me" || req.path === "/auth/password" || req.path.startsWith("/bold/") || req.path.startsWith("/plan/") || req.path === "/mis-datos") return next(); // cerrada: puede cambiar de plan antes de pagar y descargar sus datos
     // Cerrada: solo puede ver su pantalla de pago (datos de la empresa y sus recibos), no trabajar ni descargar
     if (req.method === "GET" && (/^\/(doc|col)$/.test(req.path) && PAGO_OK.test(String(req.query.path || "")))) return next();
     // Sincronización en lote: si está cerrada, el servidor solo responde las rutas de la pantalla de pago
@@ -141,6 +142,18 @@ app.use("/api", async (req, res, next) => {
     if (await cerradaCache(u.tid)) return res.status(402).json({ error: cobro.MSG, code: "cerrada" });
   } catch (e) { console.error("revisión de cierre", e.message); return res.status(503).json({ error: "No se pudo revisar el estado de la empresa. Intente de nuevo." }); }
   next();
+});
+// Descarga de los datos de la empresa (prospectos y clientes, también los archivados), aunque el acceso esté cerrado por pago.
+// Solo el administrador; archivo para Excel en español (punto y coma y BOM).
+app.get("/api/mis-datos", async (req, res) => {
+  const u = req.user; if (!u || u.staff || !u.tid || u.role !== "admin" || u.demo) return res.status(403).json({ error: "Solo el administrador de la empresa descarga los datos." });
+  const q = (v) => '"' + String(v == null ? "" : v).replace(/"/g, '""').replace(/[\r\n]+/g, " ") + '"';
+  const f = (ms) => ms ? new Date(ms).toLocaleString("es-CO", { timeZone: "America/Bogota" }) : "";
+  const filas = [["Nombre", "Celular", "Correo", "Canal", "Interés", "Etapa", "Valor", "Creado", "Última actividad", "Archivado", "Mensajes"]];
+  for (const [col, arch] of [["leads", "No"], ["archive", "Sí"]]) for (const x of await db.listCol(`tenants/${u.tid}/${col}`)) { const l = x.data || {};
+    filas.push([l.name, l.phone, l.email, l.channel, l.interest, l.stage, l.value || "", f(l.createdAt), f(l.updatedAt), arch, (l.messages || []).length]); }
+  const txt = "\ufeff" + filas.map((r) => r.map(q).join(";")).join("\r\n") + "\r\n\r\n" + q("Generado con Agente-IA de SkyNet Genesis · contacto@skynetgenesis.com · WhatsApp 304 437 5758") + "\r\n";
+  res.setHeader("Content-Type", "text/csv; charset=utf-8"); res.setHeader("Content-Disposition", 'attachment; filename="agente-ia-mis-datos.csv"'); res.send(txt);
 });
 app.post("/api/auth/password", async (req, res) => {
   if (req.user.demo || req.user.tid === auth.DEMO_TID) return res.status(403).json({ error: "En la demostración no se cambia la contraseña." });
@@ -161,12 +174,10 @@ app.post("/api/auth/users", async (req, res) => {
   if (!/^u[A-Za-z0-9_-]{2,40}$/.test(String(b.id)) || /^u-demo/.test(String(b.id))) return res.status(400).json({ error: "Identificador de usuario no válido." });
   if (b.password && String(b.password).length < 8) return res.status(400).json({ error: "La contraseña debe tener al menos 8 caracteres." });
   if (!u.staff && b.id === u.id) return res.status(403).json({ error: "Su propia contraseña y su correo se cambian en «Cambiar contraseña», con la contraseña actual." });
-  // Límite de usuarios del plan (también en el servidor)
+  // Usuarios ilimitados en todos los planes (directiva de SkyNet Genesis, 18 nov 2026)
   const exists = await db.getDoc(`tenants/${tid}/users/${b.id}`);
   // El administrador no cambia el correo ni la contraseña de OTRO administrador (cada uno cambia la suya con la actual)
   if (!u.staff && exists.exists && exists.data.role === "admin" && (b.password || (b.email && b.email !== exists.data.email))) return res.status(403).json({ error: "El correo y la contraseña de otro administrador solo los cambia él mismo (o SkyNet Genesis)." });
-  if ((!exists.exists || exists.data.active === false) && b.active !== false) { const tn = await db.getDoc("tenants/" + tid); const MAXU = { basico: 2, pro: 5, empresarial: 50 }; const n = (await db.listCol(`tenants/${tid}/users`)).filter((x) => x.data.active !== false).length;
-    if (tn.exists && n >= (MAXU[tn.data.plan] || 5)) return res.status(403).json({ error: `El plan permite hasta ${MAXU[tn.data.plan] || 5} usuarios activos. Desactive uno o cambie de plan.` }); }
   const ex = await db.pool.query("SELECT tenant_id FROM auth_users WHERE id=$1", [b.id]);
   if (ex.rows[0] && ex.rows[0].tenant_id !== tid) return res.status(403).json({ error: "No permitido." });
   if (b.email && (await db.pool.query("SELECT 1 FROM bloqueos WHERE email=$1", [String(b.email).trim().toLowerCase()])).rows[0]) return res.status(403).json({ error: "Ese correo está bloqueado por SkyNet Genesis. Escríbanos por WhatsApp (304 437 5758)." });
