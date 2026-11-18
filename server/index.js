@@ -274,12 +274,12 @@ app.post("/api/sa/borrar-empresa", async (req, res) => {
   if (t.data.paidOnce || pagos.length) return res.status(400).json({ error: "Esta empresa ya pagó: es un cliente real y no se borra desde aquí." });
   if (nombre !== String(t.data.name || "").trim()) return res.status(400).json({ error: "Escriba el nombre de la empresa exactamente como aparece." });
   const users = (await db.pool.query("SELECT id, email FROM auth_users WHERE tenant_id=$1", [tid])).rows;
-  const docsBorrados = (await db.pool.query("DELETE FROM docs WHERE path=$1 OR path LIKE $2 RETURNING path", ["tenants/" + tid, "tenants/" + tid + "/%"])).rowCount;
+  const docsBorrados = (await db.pool.query("DELETE FROM docs WHERE path LIKE $1 RETURNING path", ["tenants/" + tid + "/%"])).rowCount + 1;
+  await db.delDoc("tenants/" + tid); // así las pantallas abiertas la quitan de la lista sin recargar
   for (const x of await db.listCol("billing")) if (x.data && x.data.tid === tid) await db.delDoc("billing/" + x.id);
   for (const x of await db.listCol("tickets")) if (x.data && x.data.tid === tid) await db.delDoc("tickets/" + x.id);
   await db.pool.query("DELETE FROM auth_users WHERE tenant_id=$1", [tid]);
   await db.pool.query("DELETE FROM secrets WHERE tenant_id=$1", [tid]).catch(() => {});
-  db.bumpCol("tenants"); db.mem.doc.delete("tenants/" + tid);
   await db.setDoc("bitacora/" + Date.now().toString(36), { at: Date.now(), by: req.user.id, accion: "borrar empresa de prueba", tid, empresa: t.data.name, usuarios: users.map((u) => u.email), documentos: docsBorrados });
   res.json({ ok: true, documentos: docsBorrados, usuarios: users.length });
 });
