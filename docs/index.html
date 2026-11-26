@@ -1303,13 +1303,13 @@ const CONNECTORS = [
     steps:["Escriba el correo que recibirá los avisos.","Comparta el enlace del formulario en redes, anuncios o códigos QR, o pegue el código en su web.","Pruebe el formulario de la derecha para ver cómo llega."], out:"form"},
   {id:"instagram", title:"Instagram (mensajes directos)", desc:"Los mensajes directos de Instagram llegan a la misma bandeja y el asistente los responde.",
     fields:[{k:"user",l:"Usuario de Instagram",ph:"@suempresa"},{k:"page",l:"Página de Facebook vinculada",ph:"facebook.com/suempresa"}],
-    steps:["La cuenta de Instagram debe ser profesional (empresa o creador).","Vincularla a la página de Facebook de la empresa desde la configuración de Instagram.","En Instagram, activar Configuración > Mensajes > Permitir acceso a mensajes.","Solicitar activación: usted autoriza a Agente-IA iniciando sesión con Facebook."]},
+    steps:["La cuenta de Instagram debe ser profesional (empresa o creador).","Vincularla a la página de Facebook de la empresa desde la configuración de Instagram.","En Instagram, activar Configuración > Mensajes > Permitir acceso a mensajes.","Pulse «Conectar con Facebook», entre con la cuenta que administra la página y autorice a Agente-IA."]},
   {id:"facebook", title:"Facebook Messenger", desc:"Los mensajes de la página de Facebook entran como conversaciones en la bandeja.",
     fields:[{k:"page",l:"Página de Facebook",ph:"facebook.com/suempresa"}],
-    steps:["Ser administrador de la página de Facebook.","Solicitar activación y autorizar a Agente-IA con su cuenta de Facebook.","Enviar un mensaje de prueba a la página para comprobarlo."]},
+    steps:["Ser administrador de la página de Facebook.","Pulsar «Conectar con Facebook», autorizar a Agente-IA y elegir la página.","Enviar un mensaje de prueba a la página para comprobarlo."]},
   {id:"fbleads", title:"Formularios de anuncios de Meta", desc:"Cada persona que llena un formulario de anuncio en Facebook o Instagram queda registrada y recibe respuesta en segundos.",
     fields:[{k:"page",l:"Página que publica los anuncios",ph:"facebook.com/suempresa"},{k:"forms",l:"Nombres de los formularios",ph:"Promoción octubre, Valoración gratis"}],
-    steps:["Tener anuncios con formulario de clientes potenciales en el Administrador de anuncios.","En Meta Business, dar a Agente-IA acceso a clientes potenciales de la página.","Solicitar activación y enviar un formulario de prueba con la herramienta de prueba de Meta."]},
+    steps:["Tener anuncios con formulario de clientes potenciales en el Administrador de anuncios.","Pulsar «Conectar con Facebook» y autorizar a Agente-IA con la página que publica los anuncios.","Enviar un formulario de prueba con la herramienta de prueba de Meta."]},
   {id:"webhook", title:"Webhook, Zapier o Make", desc:"Conecta cualquier otro sistema: recibe prospectos por API y avisa a otros sistemas cuando hay novedades.",
     fields:[{k:"outUrl",l:"Dirección que recibe los avisos (opcional)",ph:"https://hooks.zapier.com/..."},{k:"events",l:"Avisar cuando",type:"select",opts:["Llega un prospecto nuevo","Un prospecto cambia de etapa","Ambos"]}],
     steps:["Si quiere enviar prospectos a otro sistema, pegue la dirección que le da Zapier, Make o su programador.","Para recibir prospectos, use la dirección de entrada que aparece abajo. La clave de acceso se genera al activar.","Solicitar activación."], out:"api"}
@@ -1330,7 +1330,7 @@ function vConn(){
     return `<div class="c ${S.wizard===c.id?"sel":""}"><div class="row" style="justify-content:space-between"><b>${c.title}</b>${on?`<span class="chip ${lab[1]}">${lab[0]}</span>`:`<span class="chip demo">Plan ${minPlanLabel(c.id)}</span>`}</div><p>${c.desc}</p>
       <div>${on?`<button class="btn sm ${st.status==="none"?"primary":""}" data-wiz="${c.id}">${st.status==="none"?"Configurar":"Ver configuración"}</button>`:`<button class="btn sm ghost" data-view="${isProv()?"clientes":"soporte"}">${isProv()?"Cambiar plan":"Solicitar mejora de plan"}</button>`}</div></div>`; }).join("");
   return head("Formularios y conexiones","Cada empresa conecta aquí sus canales. Todo lo que llega se convierte en un prospecto organizado, con respuesta inmediata.")
-  + `<div class="note" style="margin-bottom:14px">Plan <b>${plan().label}</b>: incluye ${plan().channels.map(c=>CHANNELS[c]?.label||c).join(", ")}. La activación final de Messenger e Instagram la hace el servidor de Agente-IA con la autorización de Meta. Las respuestas y la posventa por correo salen solas desde el buzón de Agente-IA.</div>`
+  + `<div class="note" style="margin-bottom:14px">Plan <b>${plan().label}</b>: incluye ${plan().channels.map(c=>CHANNELS[c]?.label||c).join(", ")}. Messenger, Instagram y los formularios de anuncios se conectan con el botón «Conectar con Facebook». Las respuestas y la posventa por correo salen solas desde el buzón de Agente-IA.</div>`
   + `<div class="grid ${w?"g2":""}" style="align-items:start"><div class="panel"><h2>Canales</h2><div class="conn">${cards}</div>
       <h3 style="margin-top:18px">Importar clientes desde Excel o CSV</h3><div class="row"><label class="btn sm" for="csvIn2">Elegir archivo CSV</label><input type="file" id="csvIn2" accept=".csv,text/csv" hidden>${can("export")?'<button class="btn sm" data-act="export">Exportar prospectos</button>':""}</div></div>
     ${w?wizard(w):""}</div>`;
@@ -1366,17 +1366,45 @@ Cuerpo JSON: {"nombre":"...","telefono":"...","correo":"...","interes":"..."}</d
     <p><span class="chip ${(CONN_STATUS[st.status]||CONN_STATUS.none)[1]}">${(CONN_STATUS[st.status]||CONN_STATUS.none)[0]}</span>${st.requestedAt?` <span class="muted">Solicitado ${ago(st.requestedAt)}</span>`:""}${st.activatedAt?` <span class="muted">· Activado ${ago(st.activatedAt)}</span>`:""}</p>
     <h3>Pasos</h3><ol style="margin:0 0 12px;padding-left:20px;display:flex;flex-direction:column;gap:6px;color:var(--ink-2)">${c.steps.map(x=>`<li>${esc(x)}</li>`).join("")}</ol>
     ${c.note?`<p class="note">${esc(c.note)}</p>`:""}
-    <div class="fields">${c.fields.map(field).join("")}</div>
-    <div class="row" style="margin-top:12px">${edit?`<button class="btn primary" data-act="connsave">${st.status==="none"?"Guardar y solicitar activación":"Guardar cambios"}</button>`:'<span class="muted">Solo el administrador puede cambiar las conexiones.</span>'}
+    ${META_CH.includes(c.id)?metaBox():""}
+    ${META_CH.includes(c.id)&&S.meta&&S.meta.conectada?"":`<div class="fields">${c.fields.map(field).join("")}</div>`}
+    <div class="row" style="margin-top:12px">${META_CH.includes(c.id)&&S.meta&&S.meta.listo?"":edit?`<button class="btn primary" data-act="connsave">${st.status==="none"?"Guardar y solicitar activación":"Guardar cambios"}</button>`:'<span class="muted">Solo el administrador puede cambiar las conexiones.</span>'}
       ${isProv()&&st.status!=="none"&&st.status!=="activo"?'<button class="btn warm" data-act="connactivate">Marcar como activo</button>':""}
-      ${(isProv()||can("config"))&&st.status==="activo"?'<button class="btn ghost" data-act="connpause">Pausar</button>':""}
-      ${can("config")&&st.status!=="none"?'<button class="btn ghost" data-act="connreset">Desconectar</button>':""}</div>
+      ${!(META_CH.includes(c.id)&&S.meta&&S.meta.listo)&&(isProv()||can("config"))&&st.status==="activo"?'<button class="btn ghost" data-act="connpause">Pausar</button>':""}
+      ${!(META_CH.includes(c.id)&&S.meta&&S.meta.listo)&&can("config")&&st.status!=="none"?'<button class="btn ghost" data-act="connreset">Desconectar</button>':""}</div>
     ${SRV&&isProv()&&SECRET_FIELDS[c.id]?`<h3 style="margin-top:14px">Credenciales de activación (solo usted las ve)</h3><p class="muted" style="font-size:12.5px;margin-top:-4px">Se guardan cifradas en el servidor y nunca se muestran de nuevo. ${S.secHas?.length?"Ya guardadas: "+S.secHas.join(", "):""}</p>
       <div class="fields">${SECRET_FIELDS[c.id].map(([k,lb])=>`<label class="f">${lb}<input type="text" id="sec-${k}" autocomplete="off"></label>`).join("")}</div>
       <div class="row" style="margin-top:8px"><button class="btn sm primary" data-srv="secrets|${c.id}">Guardar credenciales</button></div>`:""}
     ${SRV&&isProv()&&c.id==="webhook"?`<div class="row" style="margin-top:8px"><button class="btn sm" data-srv="apikey">Generar clave de API</button></div>${S.apiKey?`<div class="code" style="margin-top:6px">${esc(S.apiKey)}</div><p class="muted" style="font-size:12.5px">Cópiela ahora: no se vuelve a mostrar.</p>`:""}`:""}
     ${extra}</div>`;
 }
+const META_CH=["facebook","instagram","fbleads"];
+const META_MSG={vencido:"La autorización tardó demasiado. Pulse otra vez «Conectar con Facebook».",cancelado:"No se completó la autorización en Facebook.",sinpaginas:"Esa cuenta de Facebook no administra ninguna página. Entre con la cuenta que administra la página de la empresa.",error:"Facebook no respondió bien. Intente de nuevo en unos minutos."};
+function metaCargar(){ if(!SRV||S.metaCargando) return; S.metaCargando=true; window.GC_req("GET","/api/meta/estado"+(isProv()?"?tid="+encodeURIComponent(S.tid):"")).then(r=>{ S.meta=r; S.metaCargando=false;
+  if(r.pendientes&&r.pendientes.length===1&&S.metaAuto){ S.metaAuto=false; metaElegir(r.pendientes[0].id); } render(); }).catch(()=>{ S.metaCargando=false; }); }
+async function metaElegir(id){ try{ S.metaMsg="Conectando la página…"; render(); const r=await window.GC_req("POST","/api/meta/elegir",{page_id:id}); S.metaMsg=`Listo: la página «${r.pagina}» quedó conectada${r.instagram?" con su Instagram @"+r.instagram:""}. Escríbale un mensaje de prueba a la página.`; S.meta=null; location.reload(); }catch(err){ S.metaMsg=err.message||"No se pudo conectar."; render(); } }
+function metaBox(){
+  if(!SRV) return `<p class="note">En la demostración no se conectan redes reales.</p>`;
+  const m=S.meta; if(!m){ metaCargar(); return `<p class="muted">Revisando la conexión con Facebook…</p>`; }
+  const adm=me().role==="admin"&&!isProv();
+  let h=`<div class="panel" style="background:var(--soft-blue,#E8F1FA);margin:8px 0 12px">`;
+  if(S.metaMsg) h+=`<p class="note" style="margin-top:0">${esc(S.metaMsg)}</p>`;
+  if(m.conectada) h+=`<p style="margin:0 0 8px"><b>Conectada:</b> página «${esc(m.pagina)}»${m.instagram?` e Instagram @${esc(m.instagram)}`:" (sin Instagram vinculado)"}. SofIA responde Messenger${m.instagram?", Instagram":""} y los formularios de anuncios.</p>`+(adm?`<div class="row"><button class="btn sm" data-meta="conectar">Cambiar de página</button><button class="btn sm ghost" data-meta="desconectar">Desconectar</button></div>`:"");
+  else if(m.pendientes&&m.pendientes.length) h+=`<p style="margin:0 0 8px"><b>Elija la página de la empresa:</b></p><div class="row" style="flex-wrap:wrap">${m.pendientes.map(p=>`<button class="btn sm primary" data-meta="elegir|${esc(p.id)}">${esc(p.name)}${p.ig?" · Instagram @"+esc(p.ig):""}</button>`).join("")}</div>`;
+  else if(!m.listo) h+=`<p style="margin:0">La conexión directa con Facebook e Instagram se está habilitando con Meta. Le avisaremos por correo apenas esté lista; no tiene que hacer nada más.</p>`;
+  else if(!m.plan) h+=`<p style="margin:0">Messenger, Instagram y los formularios de anuncios están en los planes Profesional y Empresarial.</p>`;
+  else h+=adm?`<p style="margin:0 0 8px">Pulse el botón, entre con la cuenta de Facebook que administra la página y autorice a Agente-IA. Tarda menos de un minuto.</p><button class="btn primary" data-meta="conectar">Conectar con Facebook</button>`:`<p style="margin:0">El administrador de la empresa conecta Facebook e Instagram desde aquí.</p>`;
+  return h+`</div>`;
+}
+document.addEventListener("click", async e=>{
+  const b=e.target.closest("[data-meta]"); if(!b) return; const [a,arg]=b.dataset.meta.split("|");
+  if(a==="conectar"){ b.disabled=true; try{ const r=await window.GC_req("POST","/api/meta/conectar",{}); location.href=r.url; }catch(err){ b.disabled=false; toast(err.message); } return; }
+  if(a==="elegir"){ metaElegir(arg); return; }
+  if(a==="desconectar"){ if(!confirm("¿Desconectar Facebook e Instagram? SofIA dejará de responder los mensajes de la página.")) return; try{ await window.GC_req("POST","/api/meta/desconectar",{}); S.meta=null; S.metaMsg="Facebook e Instagram quedaron desconectados."; render(); }catch(err){ toast(err.message); } }
+});
+// Al volver de la ventana de Meta (#conexiones?meta=…)
+function metaVolver(){ const q=(location.hash.match(/[?&]meta=(\w+)/)||[])[1]; if(!q) return; history.replaceState(null,"",location.pathname);
+  S.view="conexiones"; S.wizard="facebook"; S.metaOpen=true; S.meta=null; S.metaMsg=META_MSG[q]||(q==="una"?"Autorización recibida. Conectando su página…":q==="elegir"?"Autorización recibida. Elija abajo la página de la empresa.":""); S.metaAuto=(q==="una"); render(); }
 const SECRET_FIELDS={instagram:[["ig_id","Identificador de la cuenta de Instagram"],["page_token","Token de la página"]], facebook:[["page_id","Identificador de la página"],["page_token","Token de la página"]], fbleads:[["page_id","Identificador de la página"],["page_token","Token de la página"]]};
 
 /* ---------- sedes ---------- */
@@ -1600,7 +1628,7 @@ function vPlans(){
   const usd=aiCostUSD(), per=u.calls?usd/u.calls:0;
   const list={
     basico:["Chat para la página web","Formulario de contacto","Respuestas automáticas","Tablero de prospectos, clientes activos e importación CSV","Conversaciones ilimitadas","Usuarios ilimitados"],
-    pro:["Todo lo del Básico","Instagram, Messenger y formularios de anuncios de Meta (SkyNet Genesis los activa con usted)","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Conversaciones ilimitadas","Usuarios ilimitados","Una mejora mensual incluida"],
+    pro:["Todo lo del Básico","Respuestas y posventa por correo","Seguimiento automático por etapas","Clientes activos: posventa, cumpleaños, encuestas y casos de soporte","Módulo opcional: recordatorios de pago","Módulo opcional: SofIA con inteligencia artificial (paquetes desde $59.000)","Módulo opcional: Asesor con IA para su página web (usa los mismos paquetes)","Conversaciones ilimitadas","Usuarios ilimitados","Una mejora mensual incluida"],
     empresarial:["Todo lo del Profesional",`Varias sedes: 1 incluida y ${cop(p.sede||0)} al mes por cada sede adicional`,"Webhook y API para conectar sus sistemas (Zapier, Make o el programa de su empresa)","Informes mensuales","Conversaciones ilimitadas","Usuarios ilimitados","Dos mejoras mensuales y soporte prioritario"]
   };
   const prov=isProv();
@@ -2796,7 +2824,7 @@ document.addEventListener("click", async e=>{
 function go(v){ if(!canView(v)){ toast("Su rol no tiene acceso a esa sección."); return; } S.view=v; LS.set("view",v); S.adding=false; render(); window.scrollTo({top:0}); }
 document.addEventListener("click", async e=>{
   const t=e.target.closest("[data-view],[data-open],[data-sel],[data-act],[data-follow],[data-delstep],[data-delfaq],[data-edituser],[data-wiz],[data-enter],[data-treply],[data-reqplan],[data-copy],[data-editsede]"); if(!t) return;
-  if(t.dataset.wiz!==undefined){ S.wizard=t.dataset.wiz||null; S.fresh=true; S.apiKey=null; if(SRV&&isProv()&&S.wizard){ window.GC_req("GET","/api/secrets/"+S.tid).then(r=>{ S.secHas=r.has; render(); }).catch(()=>{}); } render(); return; }
+  if(t.dataset.wiz!==undefined){ S.metaOpen=false; S.wizard=t.dataset.wiz||null; S.fresh=true; S.apiKey=null; if(SRV&&isProv()&&S.wizard){ window.GC_req("GET","/api/secrets/"+S.tid).then(r=>{ S.secHas=r.has; render(); }).catch(()=>{}); } render(); return; }
   if(t.dataset.enter){ switchTenant(t.dataset.enter); go(isProv()?"conexiones":"panel"); toast("Abrió "+(S.tenants.get(t.dataset.enter)?.name||"la empresa")+(isProv()?": conexiones, usuarios y plan. Las conversaciones y datos de trabajo son solo de la empresa.":"")); return; }
   if(t.dataset.editsede){ S.editSede=structuredClone(S.sedes.get(t.dataset.editsede)); S.fresh=true; render(); return; }
   if(t.dataset.copy){ const txt=t.closest(".panel")?.querySelector(".code")?.textContent||""; try{ await navigator.clipboard.writeText(txt); toast("Código copiado"); }catch{ toast("Seleccione el código y cópielo manualmente."); } return; }
@@ -2941,7 +2969,7 @@ let tenantUnsubs=[];
 function subscribeTenant(){
   tenantUnsubs.forEach(u=>{ try{u()}catch{} }); tenantUnsubs=[];
   S.leads=new Map(); S.users=new Map(); S.config=structuredClone(DEFAULT_CONFIG); S.logo=""; S.usage={calls:0,inTok:0,outTok:0}; S.conns={}; S.sedes=new Map(); S.invoices=new Map(); S.invSel=null; S.invNew=null; S.appts=new Map(); S.audit=new Map(); S.askOut="";
-  S.leadsLoaded=false; S.sel=null; S.editUser=null; S.wizard=null; render();
+  S.leadsLoaded=false; S.sel=null; S.editUser=null; S.wizard=S.metaOpen?"facebook":null; render();
   const db=S.db; if(!db){ S.leadsLoaded=true; return; }
   if(isProv()) S.leadsLoaded=true; // el Superadministrador no carga conversaciones ni datos de trabajo de las empresas
   const toMap = snap => { const m=new Map(); snap.docs.forEach(d=>{ if(d.exists) m.set(d.id,{...JSON.parse(JSON.stringify(d.data())), id:d.id}); }); return m; };
@@ -2977,7 +3005,7 @@ render();
   db.collection("billing").onSnapshot(snap=>{ S.billing=toMap(snap); render(); }, ()=>{});
   db.collection("boldpagos").onSnapshot(snap=>{ S.boldpagos=toMap(snap); render(); }, ()=>{});
   if(window.GC_USER&&window.GC_USER.staff&&window.GC_req){ window.GC_req("GET","/api/bold/recibos").then(j=>{ S.boldRevisar=j.revisar||[]; render(); }).catch(()=>{}); }
-  boldVolver();
+  boldVolver(); metaVolver();
   db.collection("tickets").onSnapshot(snap=>{ S.tickets=toMap(snap); render(); }, ()=>{});
   subscribeTenant();
 })();
