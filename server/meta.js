@@ -11,8 +11,10 @@ const API_BASE = () => (process.env.PUBLIC_API || "https://api-comercial.skynetg
 const APP = () => (process.env.APP_ORIGIN || "").split(",")[0].trim() || "https://agente-ia.skynetgenesis.com";
 const listo = () => !!(process.env.META_APP_ID && process.env.META_APP_SECRET);
 const SCOPES = ["pages_show_list", "pages_manage_metadata", "pages_messaging", "pages_read_engagement", "business_management",
-  "instagram_basic", "instagram_manage_messages", "leads_retrieval"];
-const CAMPOS_PAGINA = "messages,messaging_postbacks,leadgen";
+  "instagram_basic", "instagram_manage_messages"];
+// Los formularios de anuncios (leads_retrieval) se agregan cuando Meta apruebe ese permiso: META_SCOPES_EXTRA=leads_retrieval
+if (process.env.META_SCOPES_EXTRA) SCOPES.push(...process.env.META_SCOPES_EXTRA.split(",").map((x) => x.trim()).filter(Boolean));
+const CAMPOS_PAGINA = process.env.META_SCOPES_EXTRA && /leads_retrieval/.test(process.env.META_SCOPES_EXTRA) ? "messages,messaging_postbacks,leadgen" : "messages,messaging_postbacks";
 
 async function g(path, token, method = "GET", body) {
   const url = `${GRAPH()}/${path}${path.includes("?") ? "&" : "?"}access_token=${encodeURIComponent(token)}`;
@@ -51,7 +53,7 @@ async function activarCanales(tid, pagina, ig) {
   const c = await db.getDoc(`tenants/${tid}/config/connections`); const d = c.exists ? { ...c.data } : {}; const t = Date.now();
   const on = (k, data) => { d[k] = { ...(d[k] || {}), status: "activo", activatedAt: t, data: { ...((d[k] || {}).data || {}), ...data }, via: "meta" }; };
   on("facebook", { page: pagina.name, pageId: pagina.id });
-  on("fbleads", { page: pagina.name, pageId: pagina.id });
+  if (/leadgen/.test(CAMPOS_PAGINA)) on("fbleads", { page: pagina.name, pageId: pagina.id });
   if (ig) on("instagram", { user: ig.username ? "@" + ig.username : "", page: pagina.name }); else if (d.instagram && d.instagram.via === "meta") d.instagram = { status: "none", data: {} };
   await db.setDoc(`tenants/${tid}/config/connections`, d);
 }
