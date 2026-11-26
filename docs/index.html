@@ -757,8 +757,10 @@ function botCtx(){
   return {company:c.company, assistant:c.assistant, services:c.services, extra:c.extra, hoursText, phone:c.phone, faqs:c.faqs, catalog:b.catalog, payInfo:(c.collect||{}).payInfo||"", payLink:b.payLink,
     sedes:featOn("sedes")?sedesArr():[], agendaOn:b.agendaOn, agendaServices:b.services, slots:n=>freeSlots(n), fmt:fdt, openNow:isOpen(now()), nextOpenText:no?fdt(no):""};
 }
+const dayanaOn=()=>S.config.cerebro!==false&&((S.config.cerebro&&S.config.cerebro.tipo==="dayana")||S.tid==="tmvvjcz5p8snnf");
 async function aiReply(l){
   const c=S.config;
+  if(dayanaOn()) return {reply:"En esta empresa "+(c.assistant||"SofIA")+" responde con la información de Dayana (la misma del chat de la página web). Para probarla, escriba a la página de Facebook o al Instagram de la empresa.",handoff:false};
   if(!aiOn()){ const last=(l.messages||[]).filter(m=>m.from==="cliente").slice(-1)[0]; return window.GC_BOT.reply(botCtx(), l, last?last.text:""); }
   if(S.sample){
     const prompt = `Eres "${c.assistant}", el asistente virtual de ${c.company}. Respondes por ${(CHANNELS[l.channel]||CHANNELS.web).label} a un cliente potencial.
@@ -1286,6 +1288,7 @@ function vKB(){
   const c=S.config;
   return head("Base de conocimiento","Lo que el asistente sabe de la empresa. Mientras más completa, mejores respuestas da. Cada cliente que compre el sistema tiene la suya.",
     `<button class="btn primary" data-act="savekb">Guardar cambios</button>`)
+  + (dayanaOn()?`<div class="panel" style="border-left:4px solid var(--brand,#2563eb)"><h2 style="margin:0 0 6px">Una sola base de conocimientos: la de Dayana</h2><p style="margin:0;color:var(--ink-2)">${esc(S.config.assistant||"SofIA")} responde en Messenger, Instagram y los demás canales con la misma información de Dayana, la asesora de la página web (sus páginas, documentos, calendario y notas). Para actualizar lo que responde, actualice Dayana: el cambio aplica en todos los canales a la vez. Lo que está abajo ya no se usa para responder.</p></div>`:"")
   + kbPendientes()
   + `<div class="grid g2" style="align-items:start">
     <div class="panel"><h2>Datos de la empresa</h2><div class="fields">
