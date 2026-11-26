@@ -8,6 +8,7 @@ const ai = require("./ai");
 const ch = require("./channels");
 const docs = require("./docs");
 const BOT = require("./bot");
+const CEREBRO = require("./cerebro");
 const IA = require("./ia"); // módulo de pago «SofIA con inteligencia artificial»
 const ASESOR = require("./asesor"); // módulo de pago «Asesor con IA para su página web»
 
@@ -128,6 +129,8 @@ function botCtx(ctx) {
 async function aiReply(ctx, l) {
   const c = ctx.config, b = ctx.biz;
   // 1) Siempre primero las reglas (gratis). 2) Solo si no saben responder y la empresa tiene créditos de IA, responde la IA.
+  // Empresas con su propia asesora (POLIANDES → Dayana): una sola base de conocimientos, la de ella
+  if (CEREBRO.cfgOf(c, ctx.tid) && !ctx.tenant.demo && !l.demo && !l.sim) { const rc = await CEREBRO.responder(ctx, l).catch((e) => { console.error("cerebro", e.message); return null; }); if (rc) return rc; }
   const last = (l.messages || []).filter((m) => m.from === "cliente").slice(-1)[0];
   const rules = BOT.reply(botCtx(ctx), l, last ? last.text : "");
   // Módulo «Asesor con IA para su página web»: en el chat de la página, la IA responde cada mensaje (con los mismos créditos y topes)
@@ -186,7 +189,7 @@ async function botAnswer(ctx, l) {
   if (r.botState !== undefined) l.bot = r.botState;
   if (!isOpen(ctx, t) && r.handoff && r.ai) { const no = nextOpen(ctx, t); if (no) reply += `\n\nEn este momento estamos fuera del horario de atención. Un asesor le escribirá ${fdt(no)}.`; }
   reply = reply.replace(/([ap])\. m\.\./g, "$1. m."); // «8:00 a. m..» → «8:00 a. m.»
-  l.messages.push({ from: "bot", text: reply, at: t, ...(r.unknown ? { unknown: String(r.unknown).slice(0, 200) } : {}) });
+  l.messages.push({ from: "bot", text: reply, at: t, ...(r.unknown ? { unknown: String(r.unknown).slice(0, 200) } : {}), ...(r.sig && r.draw ? { dsig: String(r.sig).slice(0, 200), draw: String(r.draw).slice(0, 1500) } : {}) });
   if (r.name && !l.name) l.name = String(r.name).slice(0, 80);
   if (r.phone && !l.phone) l.phone = String(r.phone).slice(0, 40);
   if (r.email && !l.email) l.email = String(r.email).slice(0, 80);

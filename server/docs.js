@@ -95,6 +95,8 @@ async function guardedWrite(u, path, data) {
     const rr = data.biz && data.biz.rr;
     data = JSON.parse(JSON.stringify(prev.data)); if (rr !== undefined) data.biz = { ...(data.biz || {}), rr };
   }
+  // El «cerebro externo» (p. ej. Dayana para POLIANDES) solo lo pone o lo quita el personal de SkyNet Genesis
+  if (s[0] === "tenants" && s[2] === "config" && s[3] === "main" && data && !u.staff) { const c0 = prev.exists ? prev.data.cerebro : undefined; if (c0 !== undefined) data.cerebro = c0; else delete data.cerebro; }
   // Toda edición de una persona marca la hora en el servidor (así el motor sabe que su copia quedó vieja)
   if (s[0] === "tenants" && s[2] === "leads" && s.length === 4 && data && !isSys(u)) { delete data._base; data.updatedAt = Math.max(Date.now(), ((prev.exists && prev.data.updatedAt) || 0) + 1); }
   // El motor trabaja con una copia leída al empezar su ronda: si alguien de la empresa guardó la ficha mientras tanto
