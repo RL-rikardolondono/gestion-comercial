@@ -20,8 +20,10 @@
     gracias: ["gracias", "muy amable", "perfecto", "listo"],
     info: ["informacion", "info", "detalles", "me interesa", "mas datos", "quiero saber"],
     saludo: ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "saludos"],
+    servicios: ["curso*", "programa*", "carrera*", "tecnic*", "diplomado*", "servicio*", "producto*", "ofrecen", "que tienen", "que hay", "que venden", "catalogo"],
+    comprar: ["inscrib*", "matricul*", "comprar", "compro", "adquirir", "contratar", "quiero empezar", "como hago para", "separar cupo", "reservar cupo"],
   };
-  const MENU_KEYS = { 1: "precio", 2: "horario", 3: "cita", 4: "human" };
+  const MENU_KEYS = { 1: "precio", 2: "horario", 3: "cita", 4: "comprar" };
 
   const L = "A-Za-zÁÉÍÓÚÜÑáéíóúüñ";
   const CORTE = /\b(mi|y|con|de cel|celular|cel|correo|email|whatsapp|telefono|teléfono|numero|número|quiero|necesito|para)\b/i;
@@ -66,7 +68,9 @@
     if (ex.name && !lead.name) r.name = ex.name;
     if (ex.phone && !lead.phone) r.phone = ex.phone;
     if (ex.email && !lead.email) r.email = ex.email;
-    const menu = `Puedo ayudarle con:\n1. Servicios y precios\n2. Horario y ubicación\n${c.agendaOn ? "3. Agendar una cita\n" : ""}4. Hablar con un asesor\nResponda con el número.`;
+    const OPC = [["precio", "Servicios y precios"], ["horario", "Horario y ubicación"]].concat(c.agendaOn ? [["cita", "Agendar una cita"]] : [], [["comprar", "Inscribirme o comprar"]]);
+    const nOp = (k) => OPC.findIndex((o) => o[0] === k) + 1;
+    const menu = `Puedo ayudarle con:\n${OPC.map((o, i) => `${i + 1}. ${o[1]}`).join("\n")}\nResponda con el número. Si prefiere hablar con una persona, escriba ASESOR.`;
     const num = (nt.match(/^(?:opcion |la |el |numero )?([1-9])$/) || [])[1];
     const ordinal = { primer: 1, primera: 1, segund: 2, tercer: 3 }; let ord = null;
     for (const [k, v] of Object.entries(ordinal)) if (new RegExp("\\b" + k).test(nt)) ord = v;
@@ -82,7 +86,7 @@
     }
     // 2. Respuesta al menú
     let intent = null;
-    if (num && st.menu && MENU_KEYS[num] && !(num === "3" && !c.agendaOn)) intent = MENU_KEYS[num];
+    if (num && st.menu && OPC[Number(num) - 1]) intent = OPC[Number(num) - 1][0];
     // 3. Nombre cuando se le pidió
     // Frases como «Quiero inscribirme» o «Necesito información» no son nombres
     const NO_NOMBRE = /^(quiero|quisiera|necesito|busco|deseo|tengo|me|hola|buenas|buenos|buen|como|cuanto|cuanta|cual|que|donde|cuando|informacion|info|si|no|ok|vale|gracias|por|para|el|la|los|las|un|una|mi|yo|soy|estoy|puedo|pueden|ayuda|precio|precios|valor|horario|cita|inscribirme|matricula)$/;
@@ -96,6 +100,7 @@
     const faq = bestFaq(c, text);
     if (!intent) {
       if (has(nt, INTENTS.human)) intent = "human";
+      else if (has(nt, INTENTS.comprar) && !(faq && faq.score >= 0.5 && has(norm(faq.f.q), INTENTS.comprar))) intent = "comprar";
       else if (has(nt, INTENTS.cita) && !(faq && has(norm(faq.f.q), INTENTS.cita))) intent = "cita";
       else if (faq && faq.score >= 0.5 && !(catalogHit(c, text) && !keyWords(faq.f.q).some((x) => keyWords(catalogHit(c, text).n).includes(x)))) intent = "faq";
       else if (has(nt, INTENTS.cita)) intent = "cita";
@@ -104,6 +109,7 @@
       else if (has(nt, INTENTS.ubicacion)) intent = "ubicacion";
       else if (has(nt, INTENTS.pago)) intent = "pago";
       else if (faq && faq.s >= 1 && faq.score >= 0.34) intent = "faq";
+      else if (has(nt, INTENTS.servicios)) intent = "precio";
       else if (has(nt, INTENTS.gracias)) intent = "gracias";
       else if (has(nt, INTENTS.info)) intent = "info";
       else if (has(nt, INTENTS.saludo) || nt.length < 3) intent = "saludo";
@@ -119,12 +125,21 @@
         const quedo = [r.name ? "su nombre" : "", r.phone ? "su celular" : "", r.email ? "su correo" : ""].filter(Boolean);
         r.reply = `Gracias${nombre1 ? ", " + nombre1 : ""}. Ya quedó registrado ${quedo.length > 1 ? quedo.slice(0, -1).join(", ") + " y " + quedo.slice(-1) : quedo[0] || "todo"}.`;
         if (st.slots && st.slots.length) r.reply += `\nPara su cita tengo estos espacios:\n${st.slots.map((t, i) => `${i + 1}. ${c.fmt(t)}`).join("\n")}\nResponda con el número que prefiera.`;
-        else if (lead.handoff) r.reply += " Un asesor le escribirá" + (c.openNow ? " en breve." : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos") + ".");
+        else if (st.compra && (lead.phone || r.phone || lead.email || r.email)) { st.compra = false; st.menu = true; r.handoff = true; r.stage = "propuesta"; r.score = Math.max(r.score, 75); r.reply += ` Su inscripción quedó en proceso: un asesor le envía los pasos y el enlace de pago${c.openNow ? " en breve" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}.${c.payLink ? " Si prefiere, puede pagar ya aquí: " + c.payLink : ""} ¿Le ayudo con algo más mientras tanto?`; }
+        else if (lead.handoff) { r.reply += " Un asesor le escribirá" + (c.openNow ? " en breve." : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos") + ".") + " Mientras tanto, ¿en qué más le ayudo? " + menu; st.menu = true; }
         else { r.reply += ` ${menu}`; st.menu = true; }
         r.score += 5; break;
       }
       case "human":
-        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}.`; break;
+        r.handoff = true; r.reply = `Con gusto. Ya le aviso a un asesor para que le escriba${c.openNow ? " en breve" : " " + (c.nextOpenText ? "a partir del " + c.nextOpenText : "apenas abramos")}. Mientras tanto, yo le sigo atendiendo: ${menu.charAt(0).toLowerCase() + menu.slice(1).replace(/ Si prefiere hablar con una persona, escriba ASESOR\./, "")}`; st.menu = true; break;
+      case "comprar": {
+        const fq = (c.faqs || []).find((f) => has(norm(f.q), INTENTS.comprar));
+        const falta = !(lead.name || r.name) || !(lead.phone || r.phone || lead.email || r.email);
+        r.reply = (fq ? fq.a.trim() + "\n" : `¡Qué bueno que quiera empezar con ${c.company}! `) + (falta ? "Para dejar todo listo, escríbame su nombre completo y su celular, y le envío los pasos y el valor." : "Ya tengo sus datos; un asesor le confirma los pasos y le envía el enlace de pago.");
+        if (falta) { st.askedName = true; st.compra = true; } else r.handoff = true;
+        if (c.payLink) r.reply += `\nSi ya lo decidió, puede pagar en línea aquí: ${c.payLink}`;
+        r.score = Math.max(r.score, 70); r.stage = "propuesta"; st.menu = true; break;
+      }
       case "faq":
         r.reply = faq.f.a; r.score += 10; r.stage = "interesado"; if (!lead.interest) r.interest = String(faq.f.q).replace(/[¿?]/g, "").slice(0, 60); break;
       case "cita": {
@@ -141,14 +156,14 @@
         else if ((c.catalog || []).filter((x) => x.n).length) r.reply = `Estos son nuestros precios:\n${c.catalog.filter((x) => x.n).slice(0, 8).map((x) => `• ${x.n}: ${cop(x.p)}`).join("\n")}`;
         else if (c.services && String(c.services).split("\n").some((x) => x.trim() && !/(\$|desde)\s*$/i.test(x.trim()))) r.reply = String(c.services).split("\n").filter((x) => !/\$\s*$/.test(x.trim()) && !/\$\s+y\b/.test(x)).join("\n").slice(0, 700); // sin las líneas de ejemplo con precio vacío
         else { r.handoff = true; r.reply = "Un asesor le compartirá los precios en breve."; }
-        if (!r.handoff) r.reply += c.agendaOn ? "\n¿Desea agendar una cita? Responda 3." : "\n¿Le ayudo con algo más? Responda 4 para hablar con un asesor.";
+        if (!r.handoff) r.reply += c.agendaOn ? `\n¿Desea agendar una cita? Responda ${nOp("cita")}.` : `\n¿Desea inscribirse o comprar? Responda ${nOp("comprar")}.`;
         st.menu = true; r.score += 15; r.stage = "interesado"; break;
       case "horario": {
         const sedes = (c.sedes || []).filter((x) => x.hours).map((x) => `• ${x.name}: ${x.hours}`).join("\n");
         r.reply = (c.hoursText ? `Nuestro horario es: ${String(c.hoursText).replace(/\.$/, "")}.` : "Le comparto nuestro horario de atención.") + (sedes ? `\n${sedes}` : "");
         const addr = lineOf(c.extra, /direccion|calle|carrera|cra|avenida|av /);
         if (addr && !sedes) r.reply += `\n${addr.trim()}`;
-        r.reply += c.agendaOn ? "\n¿Le ayudo con algo más? Responda 1 para precios o 3 para agendar." : "\n¿Le ayudo con algo más? Responda 1 para precios o 4 para hablar con un asesor."; st.menu = true; break;
+        r.reply += `\n¿Le ayudo con algo más? Responda 1 para precios o ${c.agendaOn ? nOp("cita") + " para agendar" : nOp("comprar") + " para inscribirse"}.`; st.menu = true; break;
       }
       case "ubicacion": {
         const sedes = (c.sedes || []).filter((x) => x.address).map((x) => `• ${x.name}: ${x.address}`).join("\n");

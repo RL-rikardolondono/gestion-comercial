@@ -243,7 +243,7 @@ async function handleInbound(tid, { channel, key, phone, name, email, text, extI
   l.awaiting = "empresa"; l.followStep = 0; if (l.stage === "perdido") setStage(l, "contactado");
   await saveLead(ctx, l);
   // Si el cliente se dio de baja y vuelve a escribir, SofIA le responde (él inició la conversación); los seguimientos automáticos siguen apagados
-  const canBot = ctx.config.autoReply !== false && (!l.followPaused || l.optOut) && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !(l.handoff && l.owner);
+  const canBot = ctx.config.autoReply !== false && (!l.followPaused || l.optOut) && ctx.tenant.status !== "suspendido" && !cobro.cerrada(ctx.tenant) && !atiendePersona(l, t);
   if (canBot) await botAnswer(ctx, l);
   const fin = ctx.leads.get(l.id) || l;
   if (nuevo || (!yaHandoff && fin.handoff)) avisarEquipo(ctx, fin, !yaHandoff && fin.handoff ? "asesor" : channel === "form" ? "formulario" : "nuevo").catch(() => {});
@@ -273,6 +273,8 @@ async function avisarEquipo(ctx, l, motivo) {
 
 /* ---------- envío real de lo que la app escribe (bandeja de salida) ---------- */
 const OUT = new Set(["bot", "auto", "agente"]);
+// SofIA sigue atendiendo aunque haya pedido asesor; se calla solo si una persona del equipo escribió en esa conversación en las últimas 12 horas
+const atiendePersona = (l, t = Date.now()) => (l.messages || []).some((m) => m.from === "agente" && t - (m.at || 0) < 12 * 3600e3);
 // Después de un envío (que puede tardar), se guardan SOLO las marcas de entrega sobre la versión más reciente,
 // para no borrar un mensaje que el cliente escribió mientras tanto.
 async function saveMarks(path, arrKey, keyOf, mine) {
