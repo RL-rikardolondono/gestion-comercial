@@ -51,6 +51,7 @@ app.get("/api/cron", async (req, res) => {
 // Entradas públicas (webhooks, chat web, formulario, API)
 require("./correo").routes(app); // respuestas por correo (antes de la sesión: lo llama Brevo)
 app.use(pub.router());
+require("./meta").routes(app); // Meta vuelve aquí tras la autorización (Conectar con Facebook) y avisos de borrado de datos
 
 // Sesión
 app.post("/api/auth/login", async (req, res) => {
@@ -119,6 +120,7 @@ app.post("/api/public/registro", async (req, res) => {
 bold.routes(app); // aviso del sistema central de pagos (sin sesión; se confirma con el verificador)
 app.use("/api", auth.middleware);
 app.get("/api/auth/me", (req, res) => res.json({ user: req.user }));
+require("./meta").apiRoutes(app); // Conectar con Facebook / Instagram (administrador de la empresa)
 // Estado de cierre en memoria por 60 s (las consultas frecuentes de la app no despiertan la base de datos)
 const cierreMem = new Map();
 async function cerradaCache(tid) {

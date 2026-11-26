@@ -315,7 +315,11 @@ async function dispatchLead(tid, path, l, ctx0) {
       else if (mailOk && l.lastVia === "email" && !["instagram", "facebook"].includes(l.lastVia)) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, `Re: ${ctx.config.company}`, correoTexto(ctx, l, m.text), { replyTo: resp, tid }); m.d = "ok: correo"; }
       // Chat de la página: si el cliente ya se fue (más de 30 min sin escribir) y dejó correo, el seguimiento le llega por correo
       else if (l.channel === "web" && !(mailOk && m.from === "auto" && Date.now() - (l.lastInboundAt || 0) > 30 * 60000)) m.d = "web";
-      else if (l.channel === "instagram" || l.channel === "facebook") { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; }
+      else if (l.channel === "instagram" || l.channel === "facebook") {
+        // Regla de Meta: por Messenger e Instagram solo se responde dentro de las 24 h siguientes al último mensaje del cliente.
+        // Después, el seguimiento sale por correo si lo dejó; si no, queda para el botón «Enviar por WhatsApp» del asesor.
+        if (late) { if (mailOk && (await ch.cupo("conversacion", tid))) { await ch.sendEmail(l.email, `Mensaje de ${ctx.config.company}`, correoTexto(ctx, l, m.text), { replyTo: resp, tid }); m.d = "ok: correo"; } else m.d = "sin canal activo"; }
+        else { if (!st(l.channel === "instagram" ? "instagram" : "facebook") || !l.extKey) throw new Error("canal no activo"); await ch.sendPage(ctx.sec, l.extKey.split(":").pop(), m.text); m.d = "ok"; } }
       else if (mailOk) { if (!(await ch.cupo("conversacion", tid))) { m.d = "espera: cupo de correo"; continue; } await ch.sendEmail(l.email, l.channel === "form" ? `Su solicitud en ${ctx.config.company}` : `Mensaje de ${ctx.config.company}`, correoTexto(ctx, l, m.text), { replyTo: resp, tid }); m.d = "ok"; }
       else m.d = "sin canal activo";
     } catch (e) { m.d = "error: " + String(e.message).slice(0, 120); }
