@@ -356,7 +356,9 @@ body.has-demo-bar main,body.has-demo-bar .main{padding-bottom:90px}
     // Frases como «Quiero inscribirme» o «Necesito información» no son nombres
     const NO_NOMBRE = /^(quiero|quisiera|necesito|busco|deseo|tengo|me|hola|buenas|buenos|buen|como|cuanto|cuanta|cual|que|donde|cuando|informacion|info|si|no|ok|vale|gracias|por|para|el|la|los|las|un|una|mi|yo|soy|estoy|puedo|pueden|ayuda|precio|precios|valor|horario|cita|inscribirme|matricula)$/;
     // (también «Ana Pérez, 300 123 4567» o «Ana Pérez 300 123 4567»: el nombre es lo que va antes del número o la coma)
-    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúüñ]/i.test(String(text).trim()) && !NO_NOMBRE.test(nt.split(" ")[0]) && !has(nt, [].concat(...Object.values(INTENTS)))) {
+    // Preguntas («¿cuáles son?», «cuales son», «qué cursos hay») nunca son nombres
+    const NO_EN_NOMBRE = /\b(cual|cuales|cuanto|cuantos|cuanta|cuantas|que|quien|quienes|como|donde|cuando|porque|son|es|hay|tienen|tiene|tienes|cuesta|cuestan|vale|valen|curso|cursos|programa|programas|carrera|carreras|tecnico|tecnicos|diplomado|diplomados|clases|informacion|info|precio|precios|horario|horarios|todos|todas|otros|otras|mas|dame|digame|diga|explique|ver|esto|eso|ese|esa|alguno|alguna|ok|si|no|bien|gracias|hola)\b/;
+    if (!intent && st.askedName && !lead.name && !r.name && /^[a-záéíóúüñ]/i.test(String(text).trim()) && !/[?¿!¡]/.test(String(text)) && !NO_NOMBRE.test(nt.split(" ")[0]) && !NO_EN_NOMBRE.test(nt) && !has(nt, [].concat(...Object.values(INTENTS)))) {
       const n = limpiarNombre(text); if (n) r.name = n;
     }
     // 4. Intención por palabras clave y base de conocimiento
