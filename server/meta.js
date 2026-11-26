@@ -131,7 +131,7 @@ function apiRoutes(app) {
     if (!pag) return res.status(400).json({ error: "Elija una página." });
     const otra = await db.findTenantBySecret("page_id", pag.id);
     if (otra && otra !== tid) return res.status(409).json({ error: "Esa página ya está conectada a otra empresa en Agente-IA." });
-    try { await g(`${pag.id}/subscribed_apps`, pag.token, "POST", { subscribed_fields: CAMPOS_PAGINA }); }
+    try { await g(`${pag.id}/subscribed_apps?subscribed_fields=${encodeURIComponent(CAMPOS_PAGINA)}`, pag.token, "POST"); }
     catch (e) { return res.status(502).json({ error: "Meta no dejó conectar la página: " + e.message }); }
     if (s.page_id && s.page_id !== pag.id && s.page_token) await g(`${s.page_id}/subscribed_apps`, s.page_token, "DELETE").catch(() => {});
     await db.setSecret(tid, "page_id", pag.id); await db.setSecret(tid, "page_token", pag.token); await db.setSecret(tid, "page_name", pag.name);
